@@ -63,8 +63,8 @@ a{color:inherit;}
 
 table{width:100%;border-collapse:collapse;font-size:12.5px;}
 thead th{text-align:left;color:var(--sub);font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:0.03em;padding:8px 10px;border-bottom:1px solid var(--line);position:sticky;background:var(--card);white-space:nowrap;height:34px;z-index:5;}
-thead tr:first-child th{top:0;z-index:7;}
-thead tr:nth-child(2) th{top:34px;z-index:5;}
+thead tr:first-child th{top:0;z-index:7;box-shadow:0 -2px 0 var(--card);}
+thead tr:nth-child(2) th{top:34px;z-index:5;box-shadow:0 -2px 0 var(--card);}
 tbody td{padding:7px 10px;border-bottom:1px solid var(--line);}
 tbody tr:hover{background:#fafbfc;}
 .num{text-align:right;font-variant-numeric:tabular-nums;}
