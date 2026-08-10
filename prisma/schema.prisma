@@ -1,0 +1,159 @@
+// Prisma 스키마 - CPC 보고용 대시보드 (별도 프로젝트)
+// 이 프로젝트는 "cpc-dashboard-app"(실데이터 대시보드)과 정확히 같은 DATABASE_URL을 사용합니다.
+//
+// 중요: `prisma db push`는 스키마에 선언되지 않은 테이블을 "삭제해도 되는 테이블"로 판단합니다.
+// 그래서 이 프로젝트가 실제로 쓰지 않더라도, cpc-dashboard-app이 소유한 테이블(ShiftType,
+// ShiftCount, OvertimeEntry, OverheadShiftCount, OverheadEntry)까지 전부 여기에도 똑같이
+// 선언해둬야 db push 실행 시 그 테이블들이 삭제되지 않습니다. 이 프로젝트 코드에서는
+// 그 모델들을 직접 쓰지 않고, 오직 삭제 방지 목적으로만 선언되어 있습니다.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ===== 공유 테이블 (cpc-dashboard-app 프로젝트 소유) =====
+
+model Workcenter {
+  id              String          @id @default(cuid())
+  code            String          @unique
+  label           String
+  sortOrder       Int             @default(0)
+  color           String          @default("#6366f1")
+  cpcEntries      CpcEntry[]
+  shiftCounts     ShiftCount[]
+  overtimeEntries OvertimeEntry[]
+
+  reportShiftCounts     ReportShiftCount[]
+  reportOvertimeEntries ReportOvertimeEntry[]
+}
+
+model CpcEntry {
+  id           String     @id @default(cuid())
+  date         DateTime   @db.Date
+  workcenterId String
+  workcenter   Workcenter @relation(fields: [workcenterId], references: [id])
+  description  String
+  flight       String?
+  salesNo      String?
+  customerName String?
+  totalCpc     Float
+  createdAt    DateTime   @default(now())
+
+  @@index([date, workcenterId])
+}
+
+// --- 아래 5개 모델은 cpc-dashboard-app 프로젝트가 소유/사용하는 테이블입니다.
+//     이 프로젝트(보고용)는 이 모델들을 코드에서 전혀 쓰지 않으며, db push가 실수로
+//     테이블을 삭제하지 않도록 구조만 동일하게 선언해둔 것입니다. ---
+
+model ShiftType {
+  id                  String               @id @default(cuid())
+  code                String               @unique
+  startTime           String
+  endTime             String
+  hours               Float
+  sortOrder           Int                  @default(0)
+  shiftCounts         ShiftCount[]
+  overheadShiftCounts OverheadShiftCount[]
+}
+
+model ShiftCount {
+  id           String     @id @default(cuid())
+  date         DateTime   @db.Date
+  workcenterId String
+  workcenter   Workcenter @relation(fields: [workcenterId], references: [id])
+  shiftTypeId  String
+  shiftType    ShiftType  @relation(fields: [shiftTypeId], references: [id])
+  headcount    Int        @default(0)
+
+  @@unique([date, workcenterId, shiftTypeId])
+  @@index([date, workcenterId])
+}
+
+model OvertimeEntry {
+  id           String     @id @default(cuid())
+  date         DateTime   @db.Date
+  workcenterId String
+  workcenter   Workcenter @relation(fields: [workcenterId], references: [id])
+  hours        Float      @default(0)
+  note         String?
+
+  @@unique([date, workcenterId])
+  @@index([date, workcenterId])
+}
+
+model OverheadShiftCount {
+  id          String    @id @default(cuid())
+  date        DateTime  @db.Date
+  shiftTypeId String
+  shiftType   ShiftType @relation(fields: [shiftTypeId], references: [id])
+  headcount   Int       @default(0)
+
+  @@unique([date, shiftTypeId])
+  @@index([date])
+}
+
+model OverheadEntry {
+  id    String   @id @default(cuid())
+  date  DateTime @db.Date
+  hours Float    @default(0)
+  note  String?
+
+  @@unique([date])
+  @@index([date])
+}
+
+// ===== 이 프로젝트 전용 테이블 (보고용 대시보드가 실제로 소유/사용) =====
+// AM/PM 두 시프트만 사용하며, 순 근무시간(휴게 1시간 제외)은 둘 다 8시간으로 코드에서 고정 처리합니다
+// (시프트 코드 마스터 테이블을 따로 두지 않습니다).
+
+// 워크센터별 날짜별 AM/PM 인원수
+model ReportShiftCount {
+  id           String     @id @default(cuid())
+  date         DateTime   @db.Date
+  workcenterId String
+  workcenter   Workcenter @relation(fields: [workcenterId], references: [id])
+  shift        String     // 'AM' | 'PM'
+  headcount    Int        @default(0)
+
+  @@unique([date, workcenterId, shift])
+  @@index([date, workcenterId])
+}
+
+// 워크센터별 날짜별 연장근무 합계 시간
+model ReportOvertimeEntry {
+  id           String     @id @default(cuid())
+  date         DateTime   @db.Date
+  workcenterId String
+  workcenter   Workcenter @relation(fields: [workcenterId], references: [id])
+  hours        Float      @default(0)
+
+  @@unique([date, workcenterId])
+  @@index([date, workcenterId])
+}
+
+// 관리 인력(SPVR + Floor Manager 합산, 특정 워크센터에 속하지 않음)의 날짜별 AM/PM 인원수
+model ReportOverheadShiftCount {
+  id        String   @id @default(cuid())
+  date      DateTime @db.Date
+  shift     String   // 'AM' | 'PM'
+  headcount Int      @default(0)
+
+  @@unique([date, shift])
+  @@index([date])
+}
+
+// 관리 인력의 날짜별 연장근무 합계 시간
+model ReportOverheadEntry {
+  id    String   @id @default(cuid())
+  date  DateTime @db.Date
+  hours Float    @default(0)
+
+  @@unique([date])
+  @@index([date])
+}
