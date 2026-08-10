@@ -62,12 +62,15 @@ a{color:inherit;}
 .chart-box{position:relative;}
 
 table{width:100%;border-collapse:collapse;font-size:12.5px;}
-thead th{text-align:left;color:var(--sub);font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:0.03em;padding:8px 10px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--card);white-space:nowrap;}
+thead th{text-align:left;color:var(--sub);font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:0.03em;padding:8px 10px;border-bottom:1px solid var(--line);position:sticky;background:var(--card);white-space:nowrap;height:34px;z-index:5;}
+thead tr:first-child th{top:0;z-index:7;}
+thead tr:nth-child(2) th{top:34px;z-index:5;}
 tbody td{padding:7px 10px;border-bottom:1px solid var(--line);}
 tbody tr:hover{background:#fafbfc;}
 .num{text-align:right;font-variant-numeric:tabular-nums;}
 .table-scroll{max-height:420px;overflow-y:auto;border-radius:10px;}
 .detail-date-col{white-space:nowrap;position:sticky;left:0;background:var(--card);z-index:6;}
+thead .detail-date-col{z-index:8;}
 .bar-bg{flex:1;height:6px;background:var(--line);border-radius:99px;overflow:hidden;}
 .bar-fill{height:100%;border-radius:99px;}
 
