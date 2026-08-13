@@ -16,6 +16,11 @@ function defaultMonth() {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 }
 
+const WEEKDAYS_KO = ['일', '월', '화', '수', '목', '금', '토'];
+function weekdayLabel(dateStr) {
+  return WEEKDAYS_KO[new Date(dateStr).getUTCDay()];
+}
+
 export default function DashboardPage() {
   const [month, setMonth] = useState(defaultMonth());
   const [tableDetail, setTableDetail] = useState(false);
@@ -202,7 +207,7 @@ export default function DashboardPage() {
                 <tbody>
                   {daily.map((d, i) => (
                     <tr key={i}>
-                      <td className="detail-date-col">{d.date}</td>
+                      <td className="detail-date-col">{d.date} ({weekdayLabel(d.date)})</td>
                       {tableDetail
                         ? seriesMeta.map((m, si) => (
                             <Fragment key={si}>
