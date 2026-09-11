@@ -22,6 +22,7 @@ function weekdayLabel(dateStr) {
 }
 
 // 워크센터별 목표 CPC 수치 (근무시간당). 워크센터 이름(라벨)에 포함된 텍스트로 매칭합니다.
+// 목표는 하한선입니다 (실제 값이 목표보다 높아야 좋음).
 const TARGETS = { '베버리지': 43.3, '헤드셋': 63, '컨테이너': 25.2 };
 function findTarget(name) {
   const hit = Object.entries(TARGETS).find(([k]) => name.includes(k));
@@ -128,8 +129,8 @@ export default function DashboardPage() {
                 <div className="value">{k.value}</div>
                 <div className="sub">{k.sub}</div>
                 {k.target != null && (
-                  <div className={'kpi-target ' + (k.rawValue <= k.target ? 'good' : 'bad')}>
-                    목표 {fmt1(k.target)} · {k.rawValue <= k.target ? '목표 이내' : `+${fmt1(k.rawValue - k.target)} 초과`}
+                  <div className={'kpi-target ' + (k.rawValue >= k.target ? 'good' : 'bad')}>
+                    목표 {fmt1(k.target)} · {k.rawValue >= k.target ? '목표 달성' : `-${fmt1(k.target - k.rawValue)} 미달`}
                   </div>
                 )}
               </div>
