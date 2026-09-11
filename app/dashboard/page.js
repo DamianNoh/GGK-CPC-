@@ -55,10 +55,6 @@ function buildReason(curRaw, curDenom, prevRaw, prevDenom, mode) {
   return `전월 대비 ${rawTxt}, ${denomTxt} — ${cause}`;
 }
 
-function formatDateShort(dateStr) {
-  return `${dateStr.slice(5).replace('-', '/')}(${weekdayLabel(dateStr)})`;
-}
-
 export default function DashboardPage() {
   const [month, setMonth] = useState(defaultMonth());
   const [tableDetail, setTableDetail] = useState(false);
@@ -118,10 +114,12 @@ export default function DashboardPage() {
       const target = findTarget(s.name);
       const entry = { label: s.name + ' 평균', color: s.color, value: fmt1(actual), rawValue: actual, sub: mode === 'hours' ? '근무시간당' : '배치 인원 1인당', target };
       if (target != null) {
-        const missedDays = daily.filter((d) => (d['p' + (idx + 1)] || 0) < target).map((d) => d.date);
-        if (missedDays.length > 0) {
-          entry.missedDays = missedDays;
-          entry.missedTotal = daily.length;
+        const dayStatus = daily.map((d) => ({ date: d.date, ok: (d['p' + (idx + 1)] || 0) >= target }));
+        const missedCount = dayStatus.filter((ds) => !ds.ok).length;
+        if (missedCount > 0) {
+          entry.dayStatus = dayStatus;
+          entry.missedCount = missedCount;
+          entry.missedTotal = dayStatus.length;
         }
         if (actual < target) {
           const curRaw = sumField(daily, 'p' + (idx + 1) + '_raw');
@@ -194,9 +192,18 @@ export default function DashboardPage() {
                   )}
                 </div>
                 {k.reason && <div className="kpi-reason">{k.reason}</div>}
-                {k.missedDays && (
-                  <div className="kpi-days">
-                    목표 미달일 {k.missedDays.length}/{k.missedTotal}일 · {k.missedDays.map(formatDateShort).join(', ')}
+                {k.dayStatus && (
+                  <div className="kpi-daywrap">
+                    <div className="kpi-days-label">일자별 목표 달성 현황 · 미달 {k.missedCount}/{k.missedTotal}일</div>
+                    <div className="kpi-daystrip">
+                      {k.dayStatus.map((ds, di) => (
+                        <span
+                          key={di}
+                          className={'day-dot ' + (ds.ok ? 'ok' : 'no')}
+                          title={`${ds.date} (${weekdayLabel(ds.date)}) · ${ds.ok ? '목표 달성' : '목표 미달'}`}
+                        />
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>

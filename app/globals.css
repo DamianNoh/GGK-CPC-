@@ -59,7 +59,12 @@ a{color:inherit;}
 .kpi .kpi-target-box.good .kpi-target-badge{color:#15803d;background:#dcfce7;}
 .kpi .kpi-target-box.bad .kpi-target-badge{color:#dc2626;background:#fee2e2;}
 .kpi .kpi-reason{font-size:10.5px;color:var(--sub);margin-top:8px;line-height:1.45;}
-.kpi .kpi-days{font-size:10.5px;color:var(--sub);margin-top:6px;line-height:1.5;word-break:break-word;}
+.kpi .kpi-daywrap{margin-top:10px;}
+.kpi .kpi-days-label{font-size:10px;color:var(--sub);font-weight:600;margin-bottom:5px;}
+.kpi .kpi-daystrip{display:flex;flex-wrap:wrap;gap:3px;}
+.kpi .kpi-daystrip .day-dot{width:9px;height:9px;border-radius:2px;display:inline-block;cursor:default;}
+.kpi .kpi-daystrip .day-dot.ok{background:#86efac;}
+.kpi .kpi-daystrip .day-dot.no{background:#f87171;}
 
 .grid-main{display:grid;grid-template-columns:2fr 1fr;gap:16px;margin-bottom:16px;}
 .grid-sub{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;}
