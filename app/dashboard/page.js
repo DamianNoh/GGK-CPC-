@@ -55,6 +55,10 @@ function buildReason(curRaw, curDenom, prevRaw, prevDenom, mode) {
   return `전월 대비 ${rawTxt}, ${denomTxt} — ${cause}`;
 }
 
+function formatDateShort(dateStr) {
+  return `${dateStr.slice(5).replace('-', '/')}(${weekdayLabel(dateStr)})`;
+}
+
 export default function DashboardPage() {
   const [month, setMonth] = useState(defaultMonth());
   const [tableDetail, setTableDetail] = useState(false);
@@ -113,12 +117,19 @@ export default function DashboardPage() {
       const actual = avg(s.data);
       const target = findTarget(s.name);
       const entry = { label: s.name + ' 평균', color: s.color, value: fmt1(actual), rawValue: actual, sub: mode === 'hours' ? '근무시간당' : '배치 인원 1인당', target };
-      if (target != null && actual < target) {
-        const curRaw = sumField(daily, 'p' + (idx + 1) + '_raw');
-        const curDenom = sumField(daily, 'p' + (idx + 1) + '_denom');
-        const prevRaw = sumField(prevDaily, 'p' + (idx + 1) + '_raw');
-        const prevDenom = sumField(prevDaily, 'p' + (idx + 1) + '_denom');
-        entry.reason = buildReason(curRaw, curDenom, prevRaw, prevDenom, mode);
+      if (target != null) {
+        const missedDays = daily.filter((d) => (d['p' + (idx + 1)] || 0) < target).map((d) => d.date);
+        if (missedDays.length > 0) {
+          entry.missedDays = missedDays;
+          entry.missedTotal = daily.length;
+        }
+        if (actual < target) {
+          const curRaw = sumField(daily, 'p' + (idx + 1) + '_raw');
+          const curDenom = sumField(daily, 'p' + (idx + 1) + '_denom');
+          const prevRaw = sumField(prevDaily, 'p' + (idx + 1) + '_raw');
+          const prevDenom = sumField(prevDaily, 'p' + (idx + 1) + '_denom');
+          entry.reason = buildReason(curRaw, curDenom, prevRaw, prevDenom, mode);
+        }
       }
       base.push(entry);
     });
@@ -168,15 +179,26 @@ export default function DashboardPage() {
           <div className="kpi-grid">
             {kpis.map((k, i) => (
               <div className="kpi" key={i}>
-                <div className="label"><span className="dot" style={{ background: k.color }} />{k.label}</div>
-                <div className="value">{k.value}</div>
-                <div className="sub">{k.sub}</div>
-                {k.target != null && (
-                  <div className={'kpi-target ' + (k.rawValue >= k.target ? 'good' : 'bad')}>
-                    목표 {fmt1(k.target)} · {k.rawValue >= k.target ? '목표 달성' : `-${fmt1(k.target - k.rawValue)} 미달`}
+                <div className="kpi-top">
+                  <div className="kpi-main">
+                    <div className="label"><span className="dot" style={{ background: k.color }} />{k.label}</div>
+                    <div className="value">{k.value}</div>
+                    <div className="sub">{k.sub}</div>
+                  </div>
+                  {k.target != null && (
+                    <div className={'kpi-target-box ' + (k.rawValue >= k.target ? 'good' : 'bad')}>
+                      <div className="kpi-target-label">목표</div>
+                      <div className="kpi-target-value">{fmt1(k.target)}</div>
+                      <div className="kpi-target-badge">{k.rawValue >= k.target ? '달성' : `-${fmt1(k.target - k.rawValue)}`}</div>
+                    </div>
+                  )}
+                </div>
+                {k.reason && <div className="kpi-reason">{k.reason}</div>}
+                {k.missedDays && (
+                  <div className="kpi-days">
+                    목표 미달일 {k.missedDays.length}/{k.missedTotal}일 · {k.missedDays.map(formatDateShort).join(', ')}
                   </div>
                 )}
-                {k.reason && <div className="kpi-reason">{k.reason}</div>}
               </div>
             ))}
           </div>
