@@ -21,6 +21,13 @@ function weekdayLabel(dateStr) {
   return WEEKDAYS_KO[new Date(dateStr).getUTCDay()];
 }
 
+// 워크센터별 목표 CPC 수치 (근무시간당). 워크센터 이름(라벨)에 포함된 텍스트로 매칭합니다.
+const TARGETS = { '베버리지': 43.3, '헤드셋': 63, '컨테이너': 25.2 };
+function findTarget(name) {
+  const hit = Object.entries(TARGETS).find(([k]) => name.includes(k));
+  return hit ? hit[1] : null;
+}
+
 export default function DashboardPage() {
   const [month, setMonth] = useState(defaultMonth());
   const [tableDetail, setTableDetail] = useState(false);
@@ -68,7 +75,8 @@ export default function DashboardPage() {
       { label: '전체 1인당 CPC 평균', color: 'var(--total)', value: fmt1(totalPerPersonAvg), sub: mode === 'hours' ? '전체 근무시간당 (P1+P3+P4+관리인력)' : '전체 인원 1인당 (P1+P3+P4+관리인력)' }
     ];
     seriesForChart.forEach((s) => {
-      base.push({ label: s.name + ' 평균', color: s.color, value: fmt1(avg(s.data)), sub: mode === 'hours' ? '근무시간당' : '배치 인원 1인당' });
+      const actual = avg(s.data);
+      base.push({ label: s.name + ' 평균', color: s.color, value: fmt1(actual), rawValue: actual, sub: mode === 'hours' ? '근무시간당' : '배치 인원 1인당', target: findTarget(s.name) });
     });
     return base;
   }, [daily, seriesForChart, mode]);
@@ -119,6 +127,11 @@ export default function DashboardPage() {
                 <div className="label"><span className="dot" style={{ background: k.color }} />{k.label}</div>
                 <div className="value">{k.value}</div>
                 <div className="sub">{k.sub}</div>
+                {k.target != null && (
+                  <div className={'kpi-target ' + (k.rawValue <= k.target ? 'good' : 'bad')}>
+                    목표 {fmt1(k.target)} · {k.rawValue <= k.target ? '목표 이내' : `+${fmt1(k.rawValue - k.target)} 초과`}
+                  </div>
+                )}
               </div>
             ))}
           </div>
