@@ -11,6 +11,12 @@ function monthRange(monthStr) {
   return { start, end };
 }
 
+function shiftMonth(monthStr, delta) {
+  const [y, m] = monthStr.split('-').map(Number);
+  const d = new Date(Date.UTC(y, m - 1 + delta, 1));
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
 function defaultMonth() {
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
@@ -29,23 +35,50 @@ function findTarget(name) {
   return hit ? hit[1] : null;
 }
 
+function sumField(arr, field) {
+  return arr.reduce((a, d) => a + (d[field] || 0), 0);
+}
+
+// 목표 미달 원인을 전월 대비 CPC 금액 변화 / 근무시간(인원) 변화로 간단히 분석합니다.
+function buildReason(curRaw, curDenom, prevRaw, prevDenom, mode) {
+  const denomLabel = mode === 'hours' ? '근무시간' : '인원수';
+  if (!prevRaw || !prevDenom) return '전월 비교 데이터가 부족해 원인 분석이 어렵습니다.';
+  const rawChangePct = ((curRaw - prevRaw) / prevRaw) * 100;
+  const denomChangePct = ((curDenom - prevDenom) / prevDenom) * 100;
+  const rawTxt = `CPC 금액 ${rawChangePct >= 0 ? '+' : ''}${rawChangePct.toFixed(1)}%`;
+  const denomTxt = `${denomLabel} ${denomChangePct >= 0 ? '+' : ''}${denomChangePct.toFixed(1)}%`;
+  let cause;
+  if (denomChangePct > 5 && rawChangePct > -5) cause = `${denomLabel}이 평소보다 많아 목표 미달로 보입니다.`;
+  else if (rawChangePct < -5 && denomChangePct < 5) cause = 'CPC 금액이 평소보다 줄어 목표 미달로 보입니다.';
+  else if (denomChangePct > 5 && rawChangePct < -5) cause = `${denomLabel} 증가와 CPC 금액 감소가 함께 작용한 것으로 보입니다.`;
+  else cause = '전월과 큰 차이는 없어 다른 요인을 확인해볼 필요가 있습니다.';
+  return `전월 대비 ${rawTxt}, ${denomTxt} — ${cause}`;
+}
+
 export default function DashboardPage() {
   const [month, setMonth] = useState(defaultMonth());
   const [tableDetail, setTableDetail] = useState(false);
   const [mode, setMode] = useState('hours');
   const [data, setData] = useState(null);
+  const [prevData, setPrevData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
   useEffect(() => {
     const { start, end } = monthRange(month);
+    const prevRange = monthRange(shiftMonth(month, -1));
     setLoading(true);
     setError('');
-    fetch(`/api/dashboard?start=${start}&end=${end}&mode=${mode}`)
-      .then((r) => r.json())
-      .then((json) => {
+    Promise.all([
+      fetch(`/api/dashboard?start=${start}&end=${end}&mode=${mode}`).then((r) => r.json()),
+      fetch(`/api/dashboard?start=${prevRange.start}&end=${prevRange.end}&mode=${mode}`)
+        .then((r) => r.json())
+        .catch(() => null)
+    ])
+      .then(([json, prevJson]) => {
         if (json.error) throw new Error(json.error);
         setData(json);
+        setPrevData(prevJson && !prevJson.error ? prevJson : null);
       })
       .catch((e) => setError(e.message || '데이터를 불러오지 못했습니다.'))
       .finally(() => setLoading(false));
@@ -75,12 +108,22 @@ export default function DashboardPage() {
       { label: '일평균 합계 CPC', color: 'var(--total)', value: fmt1(totalAvg), sub: '1일 평균' },
       { label: '전체 1인당 CPC 평균', color: 'var(--total)', value: fmt1(totalPerPersonAvg), sub: mode === 'hours' ? '전체 근무시간당 (P1+P3+P4+관리인력)' : '전체 인원 1인당 (P1+P3+P4+관리인력)' }
     ];
-    seriesForChart.forEach((s) => {
+    const prevDaily = prevData?.daily || [];
+    seriesForChart.forEach((s, idx) => {
       const actual = avg(s.data);
-      base.push({ label: s.name + ' 평균', color: s.color, value: fmt1(actual), rawValue: actual, sub: mode === 'hours' ? '근무시간당' : '배치 인원 1인당', target: findTarget(s.name) });
+      const target = findTarget(s.name);
+      const entry = { label: s.name + ' 평균', color: s.color, value: fmt1(actual), rawValue: actual, sub: mode === 'hours' ? '근무시간당' : '배치 인원 1인당', target };
+      if (target != null && actual < target) {
+        const curRaw = sumField(daily, 'p' + (idx + 1) + '_raw');
+        const curDenom = sumField(daily, 'p' + (idx + 1) + '_denom');
+        const prevRaw = sumField(prevDaily, 'p' + (idx + 1) + '_raw');
+        const prevDenom = sumField(prevDaily, 'p' + (idx + 1) + '_denom');
+        entry.reason = buildReason(curRaw, curDenom, prevRaw, prevDenom, mode);
+      }
+      base.push(entry);
     });
     return base;
-  }, [daily, seriesForChart, mode]);
+  }, [daily, seriesForChart, mode, prevData]);
 
   const wcTotals = data?.wc_totals || {};
   const wcKeys = Object.keys(wcTotals);
@@ -133,6 +176,7 @@ export default function DashboardPage() {
                     목표 {fmt1(k.target)} · {k.rawValue >= k.target ? '목표 달성' : `-${fmt1(k.target - k.rawValue)} 미달`}
                   </div>
                 )}
+                {k.reason && <div className="kpi-reason">{k.reason}</div>}
               </div>
             ))}
           </div>
