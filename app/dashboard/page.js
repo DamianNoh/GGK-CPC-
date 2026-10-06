@@ -40,36 +40,36 @@ function sumField(arr, field) {
   return arr.reduce((a, d) => a + (d[field] || 0), 0);
 }
 
-// 목표 미달 원인을 전월 대비 CPC 금액 변화 / 근무시간(인원) 변화로 간단히 분석합니다.
-function buildReason(curRaw, curDenom, prevRaw, prevDenom, mode) {
+// 전월 대비 CPC 금액 변화 / 근무시간(인원) 변화로 목표 달성·미달 원인을 분석합니다.
+function buildReason(curRaw, curDenom, prevRaw, prevDenom, mode, achieved) {
   const denomLabel = mode === 'hours' ? '근무시간' : '인원수';
-  if (!prevRaw || !prevDenom) return '전월 비교 데이터가 부족해 원인 분석이 어렵습니다.';
+  if (!prevRaw || !prevDenom) return '전월 비교 데이터가 없어 원인 분석을 할 수 없습니다. (다음 달부터 표시됩니다)';
   const rawChangePct = ((curRaw - prevRaw) / prevRaw) * 100;
   const denomChangePct = ((curDenom - prevDenom) / prevDenom) * 100;
   const rawTxt = `CPC 금액 ${rawChangePct >= 0 ? '+' : ''}${rawChangePct.toFixed(1)}%`;
   const denomTxt = `${denomLabel} ${denomChangePct >= 0 ? '+' : ''}${denomChangePct.toFixed(1)}%`;
   let cause;
-  if (denomChangePct > 5 && rawChangePct > -5) cause = `${denomLabel}이 평소보다 많아 목표 미달로 보입니다.`;
+  if (achieved) {
+    if (denomChangePct < -5 && rawChangePct > -5) cause = `${denomLabel}이 전월보다 줄어 목표를 달성한 것으로 보입니다.`;
+    else if (rawChangePct > 5 && denomChangePct < 5) cause = 'CPC 금액이 전월보다 늘어 목표를 달성한 것으로 보입니다.';
+    else if (denomChangePct < -5 && rawChangePct > 5) cause = `${denomLabel} 감소와 CPC 금액 증가가 함께 작용한 것으로 보입니다.`;
+    else cause = '전월과 비슷한 수준으로 목표를 유지하고 있습니다.';
+  } else if (denomChangePct > 5 && rawChangePct > -5) cause = `${denomLabel}이 평소보다 많아 목표 미달로 보입니다.`;
   else if (rawChangePct < -5 && denomChangePct < 5) cause = 'CPC 금액이 평소보다 줄어 목표 미달로 보입니다.';
   else if (denomChangePct > 5 && rawChangePct < -5) cause = `${denomLabel} 증가와 CPC 금액 감소가 함께 작용한 것으로 보입니다.`;
   else cause = '전월과 큰 차이는 없어 다른 요인을 확인해볼 필요가 있습니다.';
   return `전월 대비 ${rawTxt}, ${denomTxt} — ${cause}`;
 }
 
-// 목표 대비 현황(일자별 히트맵 + 미달 원인)을 카드 항목에 붙입니다.
+// 목표 대비 현황(일자별 히트맵 + 원인 분석)을 카드 항목에 붙입니다. 달성/미달 모두 표시합니다.
 function attachTarget(entry, target, actual, dayValues, daily, curRaw, curDenom, prevRaw, prevDenom, mode) {
   entry.target = target;
   if (target == null) return;
   const dayStatus = daily.map((d, i) => ({ date: d.date, ok: (dayValues[i] || 0) >= target }));
-  const missedCount = dayStatus.filter((ds) => !ds.ok).length;
-  if (missedCount > 0) {
-    entry.dayStatus = dayStatus;
-    entry.missedCount = missedCount;
-    entry.missedTotal = dayStatus.length;
-  }
-  if (actual < target) {
-    entry.reason = buildReason(curRaw, curDenom, prevRaw, prevDenom, mode);
-  }
+  entry.dayStatus = dayStatus;
+  entry.missedCount = dayStatus.filter((ds) => !ds.ok).length;
+  entry.missedTotal = dayStatus.length;
+  entry.reason = buildReason(curRaw, curDenom, prevRaw, prevDenom, mode, actual >= target);
 }
 
 export default function DashboardPage() {
