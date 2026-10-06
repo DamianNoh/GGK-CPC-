@@ -23,11 +23,11 @@ function normalizeLabel(s) {
   return String(s || '').replace(/\s+/g, ' ').trim().toUpperCase();
 }
 
-// 부서 라벨 -> 워크센터 코드('P1'|'P3'|'P4') 또는 관리 인력(overhead) 또는 제외(skip)
+// 부서 라벨 -> 워크센터 코드('P1'|'P3'|'P4'|'OAL') 또는 관리 인력(overhead) 또는 제외(skip)
 function classifyDept(label) {
   const norm = normalizeLabel(label);
   if (!norm) return null;
-  if (norm.includes('OAL')) return { skip: true };
+  if (norm.includes('OAL')) return { pcode: 'OAL' };
   if (norm.includes('BEVERAGE') || norm.includes('ALCOHOL')) return { pcode: 'P1' };
   if (norm.includes('HEADPHONE')) return { pcode: 'P3' };
   if (norm.includes('CONSUMABLE') || norm.includes('BULK') || norm.includes('VIDEO') || norm.includes('MENU')) {
@@ -96,7 +96,7 @@ async function handleUpload(req) {
   }
 
   const blockReport = []; // { label, type, deptCount }
-  // key: bucket('P1'|'P3'|'P4'|'OVERHEAD') + '|' + dateStr + '|' + 'AM'|'PM' -> headcount 합계
+  // key: bucket('P1'|'P3'|'P4'|'OAL'|'OVERHEAD') + '|' + dateStr + '|' + 'AM'|'PM' -> headcount 합계
   const shiftAgg = new Map();
   // key: bucket + '|' + dateStr -> 연장근무 시간 합계
   const overtimeAgg = new Map();
@@ -159,7 +159,6 @@ async function handleUpload(req) {
         missingDeptLabels.add(label);
         continue;
       }
-      if (target.skip) continue;
       const bucket = target.overhead ? 'OVERHEAD' : target.pcode;
       const row = rows[rowIdx] || [];
 
@@ -192,11 +191,22 @@ async function handleUpload(req) {
   const workcenters = await prisma.workcenter.findMany();
   const wcByPCode = new Map();
   for (const wc of workcenters) {
+    // OAL 워크센터: code 또는 label에 OAL이 들어있는 행
+    const isOal = /OAL/i.test(String(wc.code || '')) || /OAL/i.test(String(wc.label || ''));
+    if (isOal) {
+      if (!wcByPCode.has('OAL')) wcByPCode.set('OAL', wc.id);
+      continue;
+    }
     const m = /P\s*-?\s*(\d+)/i.exec(wc.code);
     if (m) wcByPCode.set('P' + m[1], wc.id);
   }
 
   const missingWc = [];
+  const OAL_MISSING_MSG = 'OAL 워크센터가 등록되어 있지 않아 OAL 데이터는 저장되지 않았습니다';
+  const addMissingWc = (bucket) => {
+    const entry = bucket === 'OAL' ? OAL_MISSING_MSG : bucket;
+    if (!missingWc.includes(entry)) missingWc.push(entry);
+  };
   const wcShiftRows = [];
   const wcOvertimeRows = [];
   const overheadShiftRows = [];
@@ -210,7 +220,7 @@ async function handleUpload(req) {
     } else {
       const workcenterId = wcByPCode.get(bucket);
       if (!workcenterId) {
-        if (!missingWc.includes(bucket)) missingWc.push(bucket);
+        addMissingWc(bucket);
         continue;
       }
       wcShiftRows.push({ date, workcenterId, shift, headcount });
@@ -225,7 +235,7 @@ async function handleUpload(req) {
     } else {
       const workcenterId = wcByPCode.get(bucket);
       if (!workcenterId) {
-        if (!missingWc.includes(bucket)) missingWc.push(bucket);
+        addMissingWc(bucket);
         continue;
       }
       wcOvertimeRows.push({ date, workcenterId, hours });
