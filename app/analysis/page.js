@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 const TARGETS = { '베버리지': 43.3, '헤드셋': 63, '컨테이너': 25.2, 'OAL': 41.9 };
 const TOTAL_TARGET = 42;
 const WEEKDAYS_KO = ['일', '월', '화', '수', '목', '금', '토'];
+const HOURS_PER_PERSON = 8;
 
 function findTarget(name) {
   const hit = Object.entries(TARGETS).find(([k]) => name.includes(k));
@@ -30,6 +31,8 @@ const sum = (arr, k) => arr.reduce((a, d) => a + (d[k] || 0), 0);
 const pct = (cur, prev) => (prev ? ((cur - prev) / prev) * 100 : null);
 const sgn = (v) => `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`;
 const avgOf = (arr, f) => (arr.length ? arr.reduce((a, x) => a + f(x), 0) / arr.length : 0);
+// 근무시간 → 인원 환산 (시간 기준일 때 8시간 = 1명, 인원 기준일 때는 그대로)
+const ppl = (v, mode) => (mode === 'hours' ? v / HOURS_PER_PERSON : v);
 
 // 월 전체 원인 분석 (전월 대비)
 function monthReason(curRaw, curDenom, prevRaw, prevDenom, denomLabel, achieved) {
@@ -49,7 +52,7 @@ function monthReason(curRaw, curDenom, prevRaw, prevDenom, denomLabel, achieved)
   return { text: cause, r, d };
 }
 
-// 특정 일자의 미달 원인 (월 평균 대비)
+// 특정 일자의 미달 원인 (선택한 달의 일 평균 대비)
 function dayReason(raw, denom, avgRaw, avgDenom, denomLabel) {
   if (!denom) return '근무 데이터 없음';
   if (!avgRaw || !avgDenom) return '';
@@ -65,7 +68,7 @@ function dayReason(raw, denom, avgRaw, avgDenom, denomLabel) {
   return `${rt}, ${dt} → ${cause}`;
 }
 
-// 목표를 넘긴 날의 달성 요인 (월 평균 대비)
+// 목표를 넘긴 날의 달성 요인 (선택한 달의 일 평균 대비)
 function winDayReason(raw, denom, avgRaw, avgDenom, denomLabel) {
   if (!avgRaw || !avgDenom) return '';
   const r = ((raw - avgRaw) / avgRaw) * 100;
@@ -78,6 +81,21 @@ function winDayReason(raw, denom, avgRaw, avgDenom, denomLabel) {
   return `CPC 금액 월평균 대비 ${sgn(r)}, ${denomLabel} ${sgn(d)} → ${cause}`;
 }
 
+// 미달일: 목표 달성에 필요한 근무시간/인원과 줄여야 할 규모
+function staffLine(raw, den, target, mode) {
+  if (!target || !den) return '';
+  const needDen = raw / target; // 이 CPC 금액으로 목표를 맞출 수 있는 최대 근무시간(또는 인원)
+  const excess = den - needDen;
+  if (excess <= 0) return '';
+  if (mode === 'hours') {
+    const nowP = den / HOURS_PER_PERSON;
+    const okP = Math.floor(needDen / HOURS_PER_PERSON + 1e-9);
+    return `목표 달성 기준 근무시간 ${f1(needDen)}시간 → 약 ${f1(excess)}시간(약 ${f1(excess / HOURS_PER_PERSON)}명) 초과. 약 ${f1(nowP)}명 → ${okP}명 이하로 운영했다면 달성`;
+  }
+  const okP = Math.floor(needDen + 1e-9);
+  return `목표 달성 기준 인원 ${f1(needDen)}명 → 약 ${f1(excess)}명 초과. ${f1(den)}명 → ${okP}명 이하로 운영했다면 달성`;
+}
+
 // 미달 항목에 대한 데이터 기반 제안 (추정)
 function buildSuggestions(c, winners, denomLabel, mode) {
   const out = [];
@@ -86,8 +104,17 @@ function buildSuggestions(c, winners, denomLabel, mode) {
     const cut = c.curDen - c.curRaw / c.target;
     const add = c.target * c.curDen - c.curRaw;
     if (cut > 0) {
-      out.push(`월 기준 대략 ${denomLabel}을 ${f0(cut)}${unit}(${((cut / c.curDen) * 100).toFixed(1)}%) 줄이거나, CPC 금액을 ${f0(add)} 늘리면 목표에 도달합니다.`);
+      const perDay = c.activeDays ? cut / c.activeDays : 0;
+      const perDayTxt = mode === 'hours'
+        ? `하루 평균 약 ${f1(perDay)}시간(약 ${f1(perDay / HOURS_PER_PERSON)}명) 감소`
+        : `하루 평균 약 ${f1(perDay)}명 감소`;
+      out.push(`월 기준 대략 ${denomLabel}을 ${f0(cut)}${unit}(${((cut / c.curDen) * 100).toFixed(1)}%) 줄이거나, CPC 금액을 ${f0(add)} 늘리면 목표에 도달합니다. 근무시간 감소로 달성하려면 ${perDayTxt}에 해당합니다.`);
     }
+  }
+  // 평소(월평균) 인력으로도 미달인지 확인 → 구조적 문제 여부
+  if (c.avgRaw && c.avgDen && c.avgRaw / c.avgDen < c.target) {
+    const need = c.avgRaw / c.target;
+    out.push(`평소(월평균) ${denomLabel} ${f1(c.avgDen)}${unit} 수준으로 운영해도 하루 평균 ${f1(c.avgRaw / c.avgDen)}로 목표 미달입니다. 특정일 문제가 아니라 평소 배치 수준 조정이 필요하며, 하루 약 ${f1(c.avgDen - need)}${unit}${mode === 'hours' ? `(약 ${f1((c.avgDen - need) / HOURS_PER_PERSON)}명)` : ''} 감소가 필요합니다.`);
   }
   const hits = c.rows.filter((x) => x.value >= c.target);
   const miss = c.rows.filter((x) => x.value < c.target);
@@ -99,7 +126,7 @@ function buildSuggestions(c, winners, denomLabel, mode) {
     const d = hDen ? ((mDen - hDen) / hDen) * 100 : 0;
     const r = hRaw ? ((mRaw - hRaw) / hRaw) * 100 : 0;
     if (d > 8) {
-      out.push(`달성한 ${hits.length}일은 미달일보다 ${denomLabel}이 평균 ${d.toFixed(1)}% 적었습니다 (${f1(hDen)} vs ${f1(mDen)}). 물량 대비 인력·연장근무 조정이 효과적일 수 있습니다.`);
+      out.push(`달성한 ${hits.length}일은 미달일보다 ${denomLabel}이 평균 ${d.toFixed(1)}% 적었습니다 (${f1(hDen)} vs ${f1(mDen)}, 하루 평균 약 ${f1(ppl(mDen - hDen, mode))}명 차이). 물량 대비 인력·연장근무 조정이 효과적일 수 있습니다.`);
     } else if (r < -8) {
       out.push(`달성한 ${hits.length}일은 미달일보다 CPC 금액이 평균 ${Math.abs(r).toFixed(1)}% 많았습니다 (${f0(hRaw)} vs ${f0(mRaw)}). 물량이 적은 날 인력을 탄력 운영하면 도움이 될 수 있습니다.`);
     } else {
@@ -218,7 +245,7 @@ export default function MeetingPage() {
       const active = daily.filter((d) => (d[def.den] || 0) > 0);
       const avgRaw = active.length ? curRaw / active.length : 0;
       const avgDen = active.length ? curDen / active.length : 0;
-      const card = { ...def, actual, curRaw, curDen };
+      const card = { ...def, actual, curRaw, curDen, avgRaw, avgDen };
       if (def.target != null) {
         card.achieved = actual >= def.target;
         card.diff = actual - def.target;
@@ -229,7 +256,7 @@ export default function MeetingPage() {
             const v = d[def.key] || 0;
             return {
               date: d.date, value: v, gap: def.target - v, gapPct: ((def.target - v) / def.target) * 100,
-              raw: d[def.raw] || 0, den: d[def.den] || 0,
+              raw: d[def.raw] || 0, den: d[def.den] || 0, target: def.target,
               why: dayReason(d[def.raw] || 0, d[def.den] || 0, avgRaw, avgDen, denomLabel),
               name: def.name, color: def.color
             };
@@ -328,6 +355,7 @@ export default function MeetingPage() {
         .mt-w .rk{font-size:12px;font-weight:700;color:#b91c1c}
         .mt-w .dt{font-size:20px;font-weight:800;margin:2px 0}
         .mt-w .ds{font-size:13px;color:#334155;line-height:1.55}
+        .mt-w .staff{margin-top:6px;padding:6px 8px;background:#fff;border:1px dashed #f87171;border-radius:8px;font-size:12.5px;color:#7f1d1d}
         .mt-wdrow{display:flex;align-items:center;gap:10px;margin:6px 0;font-size:13px}
         .mt-wdrow .l{width:28px;font-weight:700}
         .mt-wdbar{flex:1;height:14px;background:#f1f5f9;border-radius:7px;overflow:hidden}
@@ -445,17 +473,21 @@ export default function MeetingPage() {
               <div className="mt-note">목표 미달일이 없습니다.</div>
             ) : (
               <div className="mt-worst">
-                {report.worst.map((w, i) => (
-                  <div className="mt-w" key={i}>
-                    <div className="rk">#{i + 1} · {w.name}</div>
-                    <div className="dt">{w.date} ({wd(w.date)})</div>
-                    <div className="ds">
-                      실제 {f1(w.value)} / 목표 {f1(w.value + w.gap)} → <b>-{f1(w.gap)} ({w.gapPct.toFixed(1)}% 부족)</b><br />
-                      CPC 금액 {f0(w.raw)} · {denomLabel} {f1(w.den)}<br />
-                      {w.why}
+                {report.worst.map((w, i) => {
+                  const sl = staffLine(w.raw, w.den, w.target, mode);
+                  return (
+                    <div className="mt-w" key={i}>
+                      <div className="rk">#{i + 1} · {w.name}</div>
+                      <div className="dt">{w.date} ({wd(w.date)})</div>
+                      <div className="ds">
+                        실제 {f1(w.value)} / 목표 {f1(w.target)} → <b>-{f1(w.gap)} ({w.gapPct.toFixed(1)}% 부족)</b><br />
+                        CPC 금액 {f0(w.raw)} · {denomLabel} {f1(w.den)}<br />
+                        {w.why}
+                      </div>
+                      {sl && <div className="staff"><b>인력 환산:</b> {sl}</div>}
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -518,7 +550,7 @@ export default function MeetingPage() {
           </div>
 
           <div className="mt-foot">
-            * 실제 평균은 대시보드와 동일하게 일별 값의 평균입니다. 원인 분석은 전월 대비(월 단위), 월 평균 대비(일 단위) 변화율로 자동 계산한 참고용 추정입니다. 개선 제안은 인력·물량 데이터에서 도출한 추정이며, 실제 작업 방식 변경 등 현장 요인은 데이터에 없으므로 회의에서 보충이 필요합니다.
+            * 실제 평균은 대시보드와 동일하게 일별 값의 평균입니다. 원인 분석은 전월 대비(월 단위), 해당 월 일 평균 대비(일 단위) 변화율로 자동 계산한 참고용 추정입니다. 인원 환산은 근무시간 ÷ 8시간의 근사치이며 CPC 금액(물량)이 변하지 않는다는 가정입니다. 개선 제안은 인력·물량 데이터에서 도출한 추정이며, 실제 작업 방식 변경 등 현장 요인은 데이터에 없으므로 회의에서 보충이 필요합니다.
           </div>
         </>
       )}
