@@ -131,8 +131,16 @@ export default function DashboardPage() {
     );
 
     const base = [
-      { label: '일일 합계 CPC (월 누계)', color: 'var(--total)', value: fmt(totalSum), sub: `${data.range_label} 합산` },
-      { label: '일평균 합계 CPC', color: 'var(--total)', value: fmt1(totalAvg), sub: '1일 평균' },
+      {
+        pair: true,
+        label: '합계 CPC',
+        color: 'var(--total)',
+        items: [
+          { title: '월 누계', value: fmt(totalSum) },
+          { title: '일평균', value: fmt1(totalAvg) }
+        ],
+        sub: `${data.range_label} 합산`
+      },
       totalEntry
     ];
 
@@ -163,6 +171,13 @@ export default function DashboardPage() {
 
   return (
     <div className="wrap">
+      <style>{`
+        .kpi-grid{grid-template-columns:repeat(3,minmax(0,1fr)) !important}
+        @media (max-width:900px){.kpi-grid{grid-template-columns:repeat(2,minmax(0,1fr)) !important}}
+        @media (max-width:600px){.kpi-grid{grid-template-columns:minmax(0,1fr) !important}}
+        .kpi-pair{display:flex;gap:28px;margin-top:6px;flex-wrap:wrap}
+        .kpi-pair .kpi-pair-title{font-size:12px;color:#767b8a;margin-bottom:2px}
+      `}</style>
       <div className="header">
         <div>
           <h1>GGK CPC 대시보드</h1>
@@ -195,7 +210,21 @@ export default function DashboardPage() {
       {!error && (
         <>
           <div className="kpi-grid">
-            {kpis.map((k, i) => (
+            {kpis.map((k, i) =>
+              k.pair ? (
+                <div className="kpi" key={i}>
+                  <div className="label"><span className="dot" style={{ background: k.color }} />{k.label}</div>
+                  <div className="kpi-pair">
+                    {k.items.map((it, ii) => (
+                      <div key={ii}>
+                        <div className="kpi-pair-title">{it.title}</div>
+                        <div className="value">{it.value}</div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="sub">{k.sub}</div>
+                </div>
+              ) : (
               <div className="kpi" key={i}>
                 <div className="kpi-top">
                   <div className="kpi-main">
@@ -227,7 +256,8 @@ export default function DashboardPage() {
                   </div>
                 )}
               </div>
-            ))}
+              )
+            )}
           </div>
 
           <div className="grid-main">
