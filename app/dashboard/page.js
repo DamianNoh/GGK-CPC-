@@ -3,7 +3,6 @@ import { Fragment, useEffect, useMemo, useState } from 'react';
 import { LineChart, DonutChart, fmt, fmt1 } from './Charts';
 
 function monthRange(monthStr) {
-  // monthStr: 'YYYY-MM'
   const [y, m] = monthStr.split('-').map(Number);
   const start = `${monthStr}-01`;
   const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
@@ -27,10 +26,8 @@ function weekdayLabel(dateStr) {
   return WEEKDAYS_KO[new Date(dateStr).getUTCDay()];
 }
 
-// 워크센터별 목표 CPC 수치 (근무시간당). 워크센터 이름(라벨)에 포함된 텍스트로 매칭합니다.
-// 목표는 하한선입니다 (실제 값이 목표보다 높아야 좋음).
 const TARGETS = { '베버리지': 43.3, '헤드셋': 63, '컨테이너': 25.2, 'OAL': 41.9 };
-const TOTAL_TARGET = 42; // 전체 1인당 CPC 평균 목표
+const TOTAL_TARGET = 42;
 function findTarget(name) {
   const hit = Object.entries(TARGETS).find(([k]) => name.includes(k));
   return hit ? hit[1] : null;
@@ -40,7 +37,6 @@ function sumField(arr, field) {
   return arr.reduce((a, d) => a + (d[field] || 0), 0);
 }
 
-// 전월 대비 CPC 금액 변화 / 근무시간(인원) 변화로 목표 달성·미달 원인을 분석합니다.
 function buildReason(curRaw, curDenom, prevRaw, prevDenom, mode, achieved) {
   const denomLabel = mode === 'hours' ? '근무시간' : '인원수';
   if (!prevRaw || !prevDenom) return '전월 비교 데이터가 없어 원인 분석을 할 수 없습니다. (다음 달부터 표시됩니다)';
@@ -61,7 +57,6 @@ function buildReason(curRaw, curDenom, prevRaw, prevDenom, mode, achieved) {
   return `전월 대비 ${rawTxt}, ${denomTxt} — ${cause}`;
 }
 
-// 목표 대비 현황(일자별 히트맵 + 원인 분석)을 카드 항목에 붙입니다. 달성/미달 모두 표시합니다.
 function attachTarget(entry, target, actual, dayValues, daily, curRaw, curDenom, prevRaw, prevDenom, mode) {
   entry.target = target;
   if (target == null) return;
@@ -155,7 +150,6 @@ export default function DashboardPage() {
   }, [daily, seriesForChart, mode, prevData]);
 
   const wcTotals = data?.wc_totals || {};
-  const wcKeys = Object.keys(wcTotals);
   const wcLabels = seriesMeta.map((m) => m.name.split(' · ')[1] || m.code);
   const wcValues = seriesMeta.map((m) => wcTotals[m.code] || 0);
   const wcColors = seriesMeta.map((m) => m.color);
@@ -184,6 +178,12 @@ export default function DashboardPage() {
           <button className={mode === 'headcount' ? 'active' : ''} onClick={() => setMode('headcount')}>배치 인원수 기준</button>
         </div>
         {loading && <span style={{ fontSize: 12.5, color: '#767b8a' }}>불러오는 중...</span>}
+        <a
+          href="/meeting"
+          style={{ marginLeft: 'auto', padding: '7px 14px', borderRadius: 8, background: '#1e293b', color: '#fff', fontSize: 13, fontWeight: 600, textDecoration: 'none' }}
+        >
+          회의 자료 보기 →
+        </a>
       </div>
 
       {error && (
