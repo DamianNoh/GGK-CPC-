@@ -29,6 +29,7 @@ const f0 = (v) => Math.round(Number(v) || 0).toLocaleString('ko-KR');
 const sum = (arr, k) => arr.reduce((a, d) => a + (d[k] || 0), 0);
 const pct = (cur, prev) => (prev ? ((cur - prev) / prev) * 100 : null);
 const sgn = (v) => `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`;
+const avgOf = (arr, f) => (arr.length ? arr.reduce((a, x) => a + f(x), 0) / arr.length : 0);
 
 // 월 전체 원인 분석 (전월 대비)
 function monthReason(curRaw, curDenom, prevRaw, prevDenom, denomLabel, achieved) {
@@ -77,13 +78,10 @@ function winDayReason(raw, denom, avgRaw, avgDenom, denomLabel) {
   return `CPC 금액 월평균 대비 ${sgn(r)}, ${denomLabel} ${sgn(d)} → ${cause}`;
 }
 
-const avgOf = (arr, f) => (arr.length ? arr.reduce((a, x) => a + f(x), 0) / arr.length : 0);
-
 // 미달 항목에 대한 데이터 기반 제안 (추정)
 function buildSuggestions(c, winners, denomLabel, mode) {
   const out = [];
   const unit = mode === 'hours' ? '시간' : '명';
-  // 1. 목표까지의 격차를 숫자로 환산
   if (c.curDen > 0 && c.target > 0) {
     const cut = c.curDen - c.curRaw / c.target;
     const add = c.target * c.curDen - c.curRaw;
@@ -91,7 +89,6 @@ function buildSuggestions(c, winners, denomLabel, mode) {
       out.push(`월 기준 대략 ${denomLabel}을 ${f0(cut)}${unit}(${((cut / c.curDen) * 100).toFixed(1)}%) 줄이거나, CPC 금액을 ${f0(add)} 늘리면 목표에 도달합니다.`);
     }
   }
-  // 2. 달성일 vs 미달일 비교
   const hits = c.rows.filter((x) => x.value >= c.target);
   const miss = c.rows.filter((x) => x.value < c.target);
   if (!hits.length) {
@@ -109,13 +106,11 @@ function buildSuggestions(c, winners, denomLabel, mode) {
       out.push('달성일과 미달일의 인력·물량 차이가 크지 않습니다. 작업 구성(주요 디스크립션)이나 시간대별 생산성 확인이 필요합니다.');
     }
   }
-  // 3. 요일 집중도
   if (c.wdc) {
     const worstWd = c.wdc.map((x, i) => ({ ...x, i })).filter((x) => x.total >= 2 && x.miss >= 2 && x.miss / x.total >= 0.6)
       .sort((a, b) => b.miss / b.total - a.miss / a.total)[0];
     if (worstWd) out.push(`${WEEKDAYS_KO[worstWd.i]}요일에 미달이 집중됩니다 (${worstWd.miss}/${worstWd.total}일). 해당 요일의 인력 배치와 물량을 점검해보세요.`);
   }
-  // 4. 달성 센터의 패턴 참고
   const hints = winners
     .map((w) => {
       const wh = w.rows.filter((x) => x.value >= w.target), wm = w.rows.filter((x) => x.value < w.target);
@@ -128,6 +123,50 @@ function buildSuggestions(c, winners, denomLabel, mode) {
   return out;
 }
 
+// 일별 그래프: 목표선 + 달성일(초록) / 미달일(빨강) 표시
+function DayChart({ series, target, color, denomLabel }) {
+  const W = 1000, H = 300, L = 52, R = 18, T = 18, B = 46;
+  const n = series.length;
+  const vals = series.filter((s) => s.active).map((s) => s.value);
+  const yMax = Math.max(target, ...(vals.length ? vals : [0])) * 1.12 || 1;
+  const x = (i) => (n <= 1 ? (L + W - R) / 2 : L + (i * (W - L - R)) / (n - 1));
+  const y = (v) => T + (1 - v / yMax) * (H - T - B);
+  const pts = series.map((s, i) => ({ ...s, i, px: x(i), py: y(s.value) }));
+  const act = pts.filter((p) => p.active);
+  const path = act.map((p, k) => `${k ? 'L' : 'M'}${p.px.toFixed(1)},${p.py.toFixed(1)}`).join(' ');
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map((t) => t * yMax);
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: 'auto' }}>
+      {ticks.map((t, k) => (
+        <g key={k}>
+          <line x1={L} x2={W - R} y1={y(t)} y2={y(t)} stroke="#e5e7eb" strokeWidth="1" />
+          <text x={L - 8} y={y(t) + 4} fontSize="11" textAnchor="end" fill="#767b8a">{t.toFixed(0)}</text>
+        </g>
+      ))}
+      <line x1={L} x2={W - R} y1={y(target)} y2={y(target)} stroke="#334155" strokeWidth="1.6" strokeDasharray="6 4" />
+      <text x={W - R} y={y(target) - 6} fontSize="12" textAnchor="end" fill="#334155" fontWeight="700">목표 {target.toFixed(1)}</text>
+      <path d={path} fill="none" stroke={color || '#64748b'} strokeWidth="2" opacity="0.55" />
+      {pts.map((p) => {
+        const dow = new Date(p.date).getUTCDay();
+        const wkColor = dow === 0 ? '#dc2626' : dow === 6 ? '#2563eb' : '#767b8a';
+        return (
+          <g key={p.i}>
+            <text x={p.px} y={H - 26} fontSize="10.5" textAnchor="middle" fill="#475569">{Number(p.date.slice(8, 10))}</text>
+            <text x={p.px} y={H - 12} fontSize="10" textAnchor="middle" fill={wkColor}>{WEEKDAYS_KO[dow]}</text>
+            {p.active ? (
+              <circle cx={p.px} cy={p.py} r="6" fill={p.value >= target ? '#22c55e' : '#ef4444'} stroke="#fff" strokeWidth="1.5">
+                <title>{`${p.date} (${WEEKDAYS_KO[dow]}) · ${p.value.toFixed(1)} · ${p.value >= target ? '목표 달성 +' + (p.value - target).toFixed(1) : '목표 미달 -' + (target - p.value).toFixed(1)}`}</title>
+              </circle>
+            ) : (
+              <text x={p.px} y={y(0) - 4} fontSize="11" textAnchor="middle" fill="#cbd5e1">·<title>{`${p.date} · ${denomLabel} 데이터 없음`}</title></text>
+            )}
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
 export default function MeetingPage() {
   const [month, setMonth] = useState(defaultMonth());
   const [mode, setMode] = useState('hours');
@@ -135,6 +174,7 @@ export default function MeetingPage() {
   const [prev, setPrev] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [selected, setSelected] = useState(null);
 
   useEffect(() => {
     const cur = monthRange(month);
@@ -198,6 +238,7 @@ export default function MeetingPage() {
         card.activeDays = active.length;
         const rows = active.map((d) => ({ date: d.date, value: d[def.key] || 0, raw: d[def.raw] || 0, den: d[def.den] || 0 }));
         card.rows = rows;
+        card.series = daily.map((d) => ({ date: d.date, value: d[def.key] || 0, active: (d[def.den] || 0) > 0 }));
         card.wins = rows
           .filter((x) => x.value >= def.target)
           .map((x) => ({
@@ -220,16 +261,13 @@ export default function MeetingPage() {
     const withTarget = cards.filter((c) => c.target != null);
     const achievedCnt = withTarget.filter((c) => c.achieved).length;
 
-    // 최악의 날 TOP 3 (전체 1인당 제외, 워크센터별 격차 %)
     const wcCards = withTarget.filter((c) => !c.isTotal);
     const allMisses = wcCards.flatMap((c) => c.misses || []).sort((a, b) => b.gapPct - a.gapPct);
     const worst = allMisses.slice(0, 3);
 
-    // 전체 1인당 기준 최악의 날
     const totalCard = cards.find((c) => c.isTotal);
     const worstTotal = totalCard?.misses?.[0] || null;
 
-    // 요일별 패턴 (워크센터 x 일자 단위 미달 건수)
     const byWd = WEEKDAYS_KO.map((label, idx) => ({ label, idx, miss: 0, hit: 0, total: 0, gapSum: 0 }));
     wcCards.forEach((c) => {
       daily.forEach((d) => {
@@ -247,10 +285,8 @@ export default function MeetingPage() {
     });
     const wdWorst = [...byWd].filter((x) => x.total > 0).sort((a, b) => b.miss / b.total - a.miss / a.total)[0];
 
-    // 베스트 데이 TOP 3 (목표 초과율 기준)
     const bests = wcCards.flatMap((c) => c.wins || []).sort((a, b) => b.surplusPct - a.surplusPct).slice(0, 3);
 
-    // 미달 항목별 데이터 기반 제안
     const winners = wcCards.filter((c) => c.achieved);
     withTarget.filter((c) => !c.achieved).forEach((c) => {
       c.suggestions = buildSuggestions(c, winners, denomLabel, mode);
@@ -302,8 +338,15 @@ export default function MeetingPage() {
         .mt-wdbar{display:flex}
         .mt-sg{margin:8px 0 0;padding-left:18px;font-size:13px;line-height:1.6;color:#334155}
         .mt-sg li{margin-bottom:6px}
+        .mt-click{cursor:pointer;transition:box-shadow .15s}
+        .mt-click:hover{box-shadow:0 2px 10px rgba(0,0,0,.1)}
+        .mt-card.sel{outline:2px solid #1e293b}
+        .mt-chartbox{border:1px solid #e2e8f0;border-radius:12px;padding:14px 16px;background:#fff}
+        .mt-close{margin-left:auto;font:inherit;font-size:12px;padding:3px 10px;border:1px solid #d5d8e0;border-radius:6px;background:#fff;cursor:pointer}
+        .mt-legend{display:flex;gap:16px;font-size:12px;color:#475569;margin-bottom:6px}
+        .mt-legend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px;vertical-align:middle}
         .mt-foot{font-size:12px;color:#767b8a;margin-top:18px}
-        @media print{.mt-tools{display:none}.mt-wrap{padding:0}.mt-card,.mt-w{break-inside:avoid}}
+        @media print{.mt-tools{display:none}.mt-wrap{padding:0}.mt-card,.mt-w{break-inside:avoid}.mt-close{display:none}}
       `}</style>
 
       <div className="mt-head">
@@ -340,10 +383,15 @@ export default function MeetingPage() {
           </div>
 
           <div className="mt-sec">
-            <h2>1. 워크센터별 달성 현황 및 원인</h2>
+            <h2>1. 워크센터별 달성 현황 및 원인 <span style={{ fontSize: 12, fontWeight: 500, color: '#767b8a' }}>(카드를 누르면 일별 그래프가 나옵니다)</span></h2>
             <div className="mt-grid">
               {report.withTarget.map((c) => (
-                <div key={c.key} className={'mt-card ' + (c.achieved ? 'good' : 'bad')}>
+                <div
+                  key={c.key}
+                  className={'mt-card mt-click ' + (c.achieved ? 'good' : 'bad') + (selected === c.key ? ' sel' : '')}
+                  onClick={() => setSelected(selected === c.key ? null : c.key)}
+                  title="클릭하면 일별 그래프를 볼 수 있습니다"
+                >
                   <div className="nm"><span className="mt-dot" style={{ background: c.color }} />{c.name}
                     <span className={'mt-tag ' + (c.achieved ? 'good' : 'bad')} style={{ marginLeft: 'auto' }}>
                       {c.achieved ? '달성' : '미달'}
@@ -365,6 +413,31 @@ export default function MeetingPage() {
               ))}
             </div>
           </div>
+
+          {(() => {
+            const sc = report.withTarget.find((c) => c.key === selected);
+            if (!sc) return null;
+            const hit = sc.series.filter((s) => s.active && s.value >= sc.target).length;
+            const miss = sc.series.filter((s) => s.active && s.value < sc.target).length;
+            return (
+              <div className="mt-sec mt-chartbox">
+                <h2 style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <span className="mt-dot" style={{ background: sc.color }} />
+                  {sc.name} 일별 그래프
+                  <span style={{ fontSize: 13, fontWeight: 500, color: '#475569' }}>
+                    · 달성 {hit}일 / 미달 {miss}일 · 목표 {f1(sc.target)}
+                  </span>
+                  <button className="mt-close" onClick={() => setSelected(null)}>닫기 ✕</button>
+                </h2>
+                <div className="mt-legend">
+                  <span><i style={{ background: '#22c55e' }} /> 목표 달성일</span>
+                  <span><i style={{ background: '#ef4444' }} /> 목표 미달일</span>
+                  <span><i style={{ background: '#334155', height: 2, borderRadius: 0 }} /> 목표선</span>
+                </div>
+                <DayChart series={sc.series} target={sc.target} color={sc.color} denomLabel={denomLabel} />
+              </div>
+            );
+          })()}
 
           <div className="mt-sec">
             <h2>2. 목표 미달이 가장 컸던 날 TOP 3 (워크센터별, 목표 대비 격차율 기준)</h2>
@@ -445,7 +518,7 @@ export default function MeetingPage() {
           </div>
 
           <div className="mt-foot">
-            * 실제 평균은 대시보드와 동일하게 일별 값의 평균입니다. 원인 분석은 전월 대비(월 단위), 월 평균 대비(일 단위) 변화율로 자동 계산한 참고용 추정이며, 개선 제안은 인력·물량 데이터에서 도출한 추정이며, 실제 작업 방식 변경 등 현장 요인은 데이터에 없으므로 회의에서 보충이 필요합니다.
+            * 실제 평균은 대시보드와 동일하게 일별 값의 평균입니다. 원인 분석은 전월 대비(월 단위), 월 평균 대비(일 단위) 변화율로 자동 계산한 참고용 추정입니다. 개선 제안은 인력·물량 데이터에서 도출한 추정이며, 실제 작업 방식 변경 등 현장 요인은 데이터에 없으므로 회의에서 보충이 필요합니다.
           </div>
         </>
       )}
