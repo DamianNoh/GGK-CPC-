@@ -211,7 +211,7 @@ export default function MeetingPage() {
 
       <div className="mt-head">
         <div>
-          <h1>CPC 목표 달성 회의 자료</h1>
+          <h1>CPC 상세 분석</h1>
           <p>{data ? data.range_label : '불러오는 중...'} · {mode === 'hours' ? '근무시간 기준' : '배치 인원수 기준'} · 목표는 하한선(실제 ≥ 목표 = 달성)</p>
         </div>
       </div>

@@ -179,10 +179,10 @@ export default function DashboardPage() {
         </div>
         {loading && <span style={{ fontSize: 12.5, color: '#767b8a' }}>불러오는 중...</span>}
         <a
-          href="/meeting"
+          href="/analysis"
           style={{ marginLeft: 'auto', padding: '7px 14px', borderRadius: 8, background: '#1e293b', color: '#fff', fontSize: 13, fontWeight: 600, textDecoration: 'none' }}
         >
-          회의 자료 보기 →
+          상세 분석 보기 →
         </a>
       </div>
 
