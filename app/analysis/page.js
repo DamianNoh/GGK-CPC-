@@ -64,6 +64,70 @@ function dayReason(raw, denom, avgRaw, avgDenom, denomLabel) {
   return `${rt}, ${dt} → ${cause}`;
 }
 
+// 목표를 넘긴 날의 달성 요인 (월 평균 대비)
+function winDayReason(raw, denom, avgRaw, avgDenom, denomLabel) {
+  if (!avgRaw || !avgDenom) return '';
+  const r = ((raw - avgRaw) / avgRaw) * 100;
+  const d = ((denom - avgDenom) / avgDenom) * 100;
+  let cause;
+  if (r > 10 && d < -10) cause = `CPC 증가 + ${denomLabel} 절감이 함께 작용`;
+  else if (r > 10 && d < 5) cause = 'CPC 금액 증가가 요인';
+  else if (d < -10 && r > -5) cause = `${denomLabel} 절감이 요인`;
+  else cause = '평소와 큰 차이 없이 목표 상회';
+  return `CPC 금액 월평균 대비 ${sgn(r)}, ${denomLabel} ${sgn(d)} → ${cause}`;
+}
+
+const avgOf = (arr, f) => (arr.length ? arr.reduce((a, x) => a + f(x), 0) / arr.length : 0);
+
+// 미달 항목에 대한 데이터 기반 제안 (추정)
+function buildSuggestions(c, winners, denomLabel, mode) {
+  const out = [];
+  const unit = mode === 'hours' ? '시간' : '명';
+  // 1. 목표까지의 격차를 숫자로 환산
+  if (c.curDen > 0 && c.target > 0) {
+    const cut = c.curDen - c.curRaw / c.target;
+    const add = c.target * c.curDen - c.curRaw;
+    if (cut > 0) {
+      out.push(`월 기준 대략 ${denomLabel}을 ${f0(cut)}${unit}(${((cut / c.curDen) * 100).toFixed(1)}%) 줄이거나, CPC 금액을 ${f0(add)} 늘리면 목표에 도달합니다.`);
+    }
+  }
+  // 2. 달성일 vs 미달일 비교
+  const hits = c.rows.filter((x) => x.value >= c.target);
+  const miss = c.rows.filter((x) => x.value < c.target);
+  if (!hits.length) {
+    out.push('목표를 달성한 날이 없어 일자 간 비교가 불가능합니다. 전반적인 인력·물량 수준 조정이 필요합니다.');
+  } else if (miss.length) {
+    const hDen = avgOf(hits, (x) => x.den), mDen = avgOf(miss, (x) => x.den);
+    const hRaw = avgOf(hits, (x) => x.raw), mRaw = avgOf(miss, (x) => x.raw);
+    const d = hDen ? ((mDen - hDen) / hDen) * 100 : 0;
+    const r = hRaw ? ((mRaw - hRaw) / hRaw) * 100 : 0;
+    if (d > 8) {
+      out.push(`달성한 ${hits.length}일은 미달일보다 ${denomLabel}이 평균 ${d.toFixed(1)}% 적었습니다 (${f1(hDen)} vs ${f1(mDen)}). 물량 대비 인력·연장근무 조정이 효과적일 수 있습니다.`);
+    } else if (r < -8) {
+      out.push(`달성한 ${hits.length}일은 미달일보다 CPC 금액이 평균 ${Math.abs(r).toFixed(1)}% 많았습니다 (${f0(hRaw)} vs ${f0(mRaw)}). 물량이 적은 날 인력을 탄력 운영하면 도움이 될 수 있습니다.`);
+    } else {
+      out.push('달성일과 미달일의 인력·물량 차이가 크지 않습니다. 작업 구성(주요 디스크립션)이나 시간대별 생산성 확인이 필요합니다.');
+    }
+  }
+  // 3. 요일 집중도
+  if (c.wdc) {
+    const worstWd = c.wdc.map((x, i) => ({ ...x, i })).filter((x) => x.total >= 2 && x.miss >= 2 && x.miss / x.total >= 0.6)
+      .sort((a, b) => b.miss / b.total - a.miss / a.total)[0];
+    if (worstWd) out.push(`${WEEKDAYS_KO[worstWd.i]}요일에 미달이 집중됩니다 (${worstWd.miss}/${worstWd.total}일). 해당 요일의 인력 배치와 물량을 점검해보세요.`);
+  }
+  // 4. 달성 센터의 패턴 참고
+  const hints = winners
+    .map((w) => {
+      const wh = w.rows.filter((x) => x.value >= w.target), wm = w.rows.filter((x) => x.value < w.target);
+      if (!wh.length || !wm.length) return null;
+      const d = ((avgOf(wm, (x) => x.den) - avgOf(wh, (x) => x.den)) / avgOf(wh, (x) => x.den)) * 100;
+      return d > 8 ? `${w.name.split(' · ')[1] || w.name}` : null;
+    })
+    .filter(Boolean);
+  if (hints.length) out.push(`달성 센터(${hints.join(', ')})도 ${denomLabel}이 적은 날 목표를 달성하는 패턴이 있어, 같은 방식의 인력 운영을 참고해볼 만합니다.`);
+  return out;
+}
+
 export default function MeetingPage() {
   const [month, setMonth] = useState(defaultMonth());
   const [mode, setMode] = useState('hours');
@@ -132,6 +196,23 @@ export default function MeetingPage() {
           })
           .sort((a, b) => b.gapPct - a.gapPct);
         card.activeDays = active.length;
+        const rows = active.map((d) => ({ date: d.date, value: d[def.key] || 0, raw: d[def.raw] || 0, den: d[def.den] || 0 }));
+        card.rows = rows;
+        card.wins = rows
+          .filter((x) => x.value >= def.target)
+          .map((x) => ({
+            ...x, name: def.name, color: def.color, target: def.target,
+            surplus: x.value - def.target, surplusPct: ((x.value - def.target) / def.target) * 100,
+            why: winDayReason(x.raw, x.den, avgRaw, avgDen, denomLabel)
+          }))
+          .sort((a, b) => b.surplusPct - a.surplusPct);
+        const wdc = WEEKDAYS_KO.map(() => ({ miss: 0, total: 0 }));
+        rows.forEach((x) => {
+          const w = new Date(x.date).getUTCDay();
+          wdc[w].total += 1;
+          if (x.value < def.target) wdc[w].miss += 1;
+        });
+        card.wdc = wdc;
       }
       return card;
     });
@@ -149,7 +230,7 @@ export default function MeetingPage() {
     const worstTotal = totalCard?.misses?.[0] || null;
 
     // 요일별 패턴 (워크센터 x 일자 단위 미달 건수)
-    const byWd = WEEKDAYS_KO.map((label, idx) => ({ label, idx, miss: 0, total: 0, gapSum: 0 }));
+    const byWd = WEEKDAYS_KO.map((label, idx) => ({ label, idx, miss: 0, hit: 0, total: 0, gapSum: 0 }));
     wcCards.forEach((c) => {
       daily.forEach((d) => {
         if ((d[c.den] || 0) <= 0) return;
@@ -159,12 +240,23 @@ export default function MeetingPage() {
         if (v < c.target) {
           byWd[w].miss += 1;
           byWd[w].gapSum += ((c.target - v) / c.target) * 100;
+        } else {
+          byWd[w].hit += 1;
         }
       });
     });
     const wdWorst = [...byWd].filter((x) => x.total > 0).sort((a, b) => b.miss / b.total - a.miss / a.total)[0];
 
-    return { cards, withTarget, achievedCnt, worst, worstTotal, byWd, wdWorst };
+    // 베스트 데이 TOP 3 (목표 초과율 기준)
+    const bests = wcCards.flatMap((c) => c.wins || []).sort((a, b) => b.surplusPct - a.surplusPct).slice(0, 3);
+
+    // 미달 항목별 데이터 기반 제안
+    const winners = wcCards.filter((c) => c.achieved);
+    withTarget.filter((c) => !c.achieved).forEach((c) => {
+      c.suggestions = buildSuggestions(c, winners, denomLabel, mode);
+    });
+
+    return { cards, withTarget, achievedCnt, worst, worstTotal, byWd, wdWorst, bests };
   }, [data, prev, mode]);
 
   return (
@@ -205,6 +297,11 @@ export default function MeetingPage() {
         .mt-wdbar{flex:1;height:14px;background:#f1f5f9;border-radius:7px;overflow:hidden}
         .mt-wdbar div{height:100%;background:#f87171}
         .mt-wdrow .v{width:150px;text-align:right;color:#475569}
+        .mt-w.mt-b{border-color:#bbf7d0;background:#f3fdf6}
+        .mt-w.mt-b .rk{color:#15803d}
+        .mt-wdbar{display:flex}
+        .mt-sg{margin:8px 0 0;padding-left:18px;font-size:13px;line-height:1.6;color:#334155}
+        .mt-sg li{margin-bottom:6px}
         .mt-foot{font-size:12px;color:#767b8a;margin-top:18px}
         @media print{.mt-tools{display:none}.mt-wrap{padding:0}.mt-card,.mt-w{break-inside:avoid}}
       `}</style>
@@ -260,7 +357,7 @@ export default function MeetingPage() {
                   {c.reason.r != null && (
                     <div className="mt-chg">전월 대비 CPC 금액 {sgn(c.reason.r)} · {denomLabel} {sgn(c.reason.d)}</div>
                   )}
-                  <div className="mt-note">{c.reason.text}</div>
+                  <div className="mt-note"><b>{c.achieved ? '달성 요인: ' : '미달 원인: '}</b>{c.reason.text}</div>
                   <div className="mt-note" style={{ color: '#767b8a' }}>
                     미달일 {c.misses.length}/{c.activeDays}일 (근무 데이터 있는 날 기준)
                   </div>
@@ -291,21 +388,64 @@ export default function MeetingPage() {
           </div>
 
           <div className="mt-sec">
-            <h2>3. 요일별 미달 패턴 (워크센터 × 일자 기준)</h2>
+            <h2>3. 목표를 가장 크게 넘긴 날 TOP 3 (달성 요인)</h2>
+            {report.bests.length === 0 ? (
+              <div className="mt-note">목표를 달성한 날이 없습니다.</div>
+            ) : (
+              <div className="mt-worst">
+                {report.bests.map((w, i) => (
+                  <div className="mt-w mt-b" key={i}>
+                    <div className="rk">#{i + 1} · {w.name}</div>
+                    <div className="dt">{w.date} ({wd(w.date)})</div>
+                    <div className="ds">
+                      실제 {f1(w.value)} / 목표 {f1(w.target)} → <b>+{f1(w.surplus)} ({w.surplusPct.toFixed(1)}% 초과)</b><br />
+                      CPC 금액 {f0(w.raw)} · {denomLabel} {f1(w.den)}<br />
+                      {w.why}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="mt-sec">
+            <h2>4. 요일별 달성/미달 패턴 (워크센터 × 일자 기준)</h2>
             {report.byWd.map((x) => {
-              const rate = x.total ? (x.miss / x.total) * 100 : 0;
+              const hitRate = x.total ? (x.hit / x.total) * 100 : 0;
+              const missRate = x.total ? (x.miss / x.total) * 100 : 0;
               return (
                 <div className="mt-wdrow" key={x.idx}>
                   <span className="l">{x.label}</span>
-                  <div className="mt-wdbar"><div style={{ width: rate.toFixed(0) + '%' }} /></div>
-                  <span className="v">{x.total ? `미달 ${x.miss}/${x.total}건 (${rate.toFixed(0)}%)` : '데이터 없음'}</span>
+                  <div className="mt-wdbar">
+                    <div style={{ width: hitRate.toFixed(0) + '%', background: '#4ade80' }} />
+                    <div style={{ width: missRate.toFixed(0) + '%' }} />
+                  </div>
+                  <span className="v">{x.total ? `달성 ${x.hit} / 미달 ${x.miss}건` : '데이터 없음'}</span>
                 </div>
               );
             })}
           </div>
 
+          <div className="mt-sec">
+            <h2>5. 미달 항목 개선 제안 (데이터 기반 추정)</h2>
+            {report.withTarget.filter((c) => !c.achieved).length === 0 ? (
+              <div className="mt-note">미달 항목이 없습니다.</div>
+            ) : (
+              <div className="mt-grid">
+                {report.withTarget.filter((c) => !c.achieved).map((c) => (
+                  <div key={c.key} className="mt-card bad">
+                    <div className="nm"><span className="mt-dot" style={{ background: c.color }} />{c.name}</div>
+                    <ul className="mt-sg">
+                      {(c.suggestions || []).map((s, i) => <li key={i}>{s}</li>)}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
           <div className="mt-foot">
-            * 실제 평균은 대시보드와 동일하게 일별 값의 평균입니다. 원인 분석은 전월 대비(월 단위), 월 평균 대비(일 단위) 변화율로 자동 계산한 참고용 추정이며, 정확한 원인은 현장 확인이 필요합니다.
+            * 실제 평균은 대시보드와 동일하게 일별 값의 평균입니다. 원인 분석은 전월 대비(월 단위), 월 평균 대비(일 단위) 변화율로 자동 계산한 참고용 추정이며, 개선 제안은 인력·물량 데이터에서 도출한 추정이며, 실제 작업 방식 변경 등 현장 요인은 데이터에 없으므로 회의에서 보충이 필요합니다.
           </div>
         </>
       )}
