@@ -31,10 +31,8 @@ const sum = (arr, k) => arr.reduce((a, d) => a + (d[k] || 0), 0);
 const pct = (cur, prev) => (prev ? ((cur - prev) / prev) * 100 : null);
 const sgn = (v) => `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`;
 const avgOf = (arr, f) => (arr.length ? arr.reduce((a, x) => a + f(x), 0) / arr.length : 0);
-// 근무시간 → 인원 환산 (시간 기준일 때 8시간 = 1명, 인원 기준일 때는 그대로)
 const ppl = (v, mode) => (mode === 'hours' ? v / HOURS_PER_PERSON : v);
 
-// 월 전체 원인 분석 (전월 대비)
 function monthReason(curRaw, curDenom, prevRaw, prevDenom, denomLabel, achieved) {
   const r = pct(curRaw, prevRaw);
   const d = pct(curDenom, prevDenom);
@@ -52,7 +50,6 @@ function monthReason(curRaw, curDenom, prevRaw, prevDenom, denomLabel, achieved)
   return { text: cause, r, d };
 }
 
-// 특정 일자의 미달 원인 (선택한 달의 일 평균 대비)
 function dayReason(raw, denom, avgRaw, avgDenom, denomLabel) {
   if (!denom) return '근무 데이터 없음';
   if (!avgRaw || !avgDenom) return '';
@@ -68,7 +65,6 @@ function dayReason(raw, denom, avgRaw, avgDenom, denomLabel) {
   return `${rt}, ${dt} → ${cause}`;
 }
 
-// 목표를 넘긴 날의 달성 요인 (선택한 달의 일 평균 대비)
 function winDayReason(raw, denom, avgRaw, avgDenom, denomLabel) {
   if (!avgRaw || !avgDenom) return '';
   const r = ((raw - avgRaw) / avgRaw) * 100;
@@ -81,10 +77,9 @@ function winDayReason(raw, denom, avgRaw, avgDenom, denomLabel) {
   return `CPC 금액 월평균 대비 ${sgn(r)}, ${denomLabel} ${sgn(d)} → ${cause}`;
 }
 
-// 미달일: 목표 달성에 필요한 근무시간/인원과 줄여야 할 규모
 function staffLine(raw, den, target, mode) {
   if (!target || !den) return '';
-  const needDen = raw / target; // 이 CPC 금액으로 목표를 맞출 수 있는 최대 근무시간(또는 인원)
+  const needDen = raw / target;
   const excess = den - needDen;
   if (excess <= 0) return '';
   if (mode === 'hours') {
@@ -96,7 +91,6 @@ function staffLine(raw, den, target, mode) {
   return `목표 달성 기준 인원 ${f1(needDen)}명 → 약 ${f1(excess)}명 초과. ${f1(den)}명 → ${okP}명 이하로 운영했다면 달성`;
 }
 
-// 미달 항목에 대한 데이터 기반 제안 (추정)
 function buildSuggestions(c, winners, denomLabel, mode) {
   const out = [];
   const unit = mode === 'hours' ? '시간' : '명';
@@ -111,7 +105,6 @@ function buildSuggestions(c, winners, denomLabel, mode) {
       out.push(`월 기준 대략 ${denomLabel}을 ${f0(cut)}${unit}(${((cut / c.curDen) * 100).toFixed(1)}%) 줄이거나, CPC 금액을 ${f0(add)} 늘리면 목표에 도달합니다. 근무시간 감소로 달성하려면 ${perDayTxt}에 해당합니다.`);
     }
   }
-  // 평소(월평균) 인력으로도 미달인지 확인 → 구조적 문제 여부
   if (c.avgRaw && c.avgDen && c.avgRaw / c.avgDen < c.target) {
     const need = c.avgRaw / c.target;
     out.push(`평소(월평균) ${denomLabel} ${f1(c.avgDen)}${unit} 수준으로 운영해도 하루 평균 ${f1(c.avgRaw / c.avgDen)}로 목표 미달입니다. 특정일 문제가 아니라 평소 배치 수준 조정이 필요하며, 하루 약 ${f1(c.avgDen - need)}${unit}${mode === 'hours' ? `(약 ${f1((c.avgDen - need) / HOURS_PER_PERSON)}명)` : ''} 감소가 필요합니다.`);
@@ -150,42 +143,78 @@ function buildSuggestions(c, winners, denomLabel, mode) {
   return out;
 }
 
-// 일별 그래프: 목표선 + 달성일(초록) / 미달일(빨강) 표시
+// 일별 그래프: 하루마다 세로 칸을 만들고, 목표선에서 해당 일자의 점까지 막대(롤리팝)로 연결합니다.
+//  - 날짜/요일은 칸 맨 아래와 맨 위에 모두 표시, 세로 점선으로 위치를 맞춰 볼 수 있습니다.
+//  - 주말은 칸 배경을 음영 처리합니다.
 function DayChart({ series, target, color, denomLabel }) {
-  const W = 1000, H = 300, L = 52, R = 18, T = 18, B = 46;
+  const W = 1000, H = 380, L = 52, R = 18, T = 46, B = 52;
   const n = series.length;
   const vals = series.filter((s) => s.active).map((s) => s.value);
-  const yMax = Math.max(target, ...(vals.length ? vals : [0])) * 1.12 || 1;
-  const x = (i) => (n <= 1 ? (L + W - R) / 2 : L + (i * (W - L - R)) / (n - 1));
-  const y = (v) => T + (1 - v / yMax) * (H - T - B);
-  const pts = series.map((s, i) => ({ ...s, i, px: x(i), py: y(s.value) }));
-  const act = pts.filter((p) => p.active);
-  const path = act.map((p, k) => `${k ? 'L' : 'M'}${p.px.toFixed(1)},${p.py.toFixed(1)}`).join(' ');
-  const ticks = [0, 0.25, 0.5, 0.75, 1].map((t) => t * yMax);
+  const lo = Math.min(target, ...(vals.length ? vals : [target]));
+  const hi = Math.max(target, ...(vals.length ? vals : [target]));
+  const span = hi - lo || Math.max(hi * 0.2, 1);
+  const yMin = Math.max(0, lo - span * 0.35);
+  const yMax = hi + span * 0.35;
+  const plotW = W - L - R;
+  const colW = plotW / n;
+  const x = (i) => L + colW * (i + 0.5);
+  const y = (v) => T + (1 - (v - yMin) / (yMax - yMin)) * (H - T - B);
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map((t) => yMin + t * (yMax - yMin));
+  const dec = yMax - yMin < 10 ? 1 : 0;
+  const yT = y(target);
   return (
     <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: 'auto' }}>
+      {/* 하루 1칸: 주말 음영 + 칸 구분선 */}
+      {series.map((s, i) => {
+        const dow = new Date(s.date).getUTCDay();
+        return (
+          <g key={'c' + i}>
+            {(dow === 0 || dow === 6) && (
+              <rect x={L + colW * i} y={T} width={colW} height={H - T - B} fill={dow === 0 ? '#fef2f2' : '#eff6ff'} />
+            )}
+            <line x1={L + colW * i} x2={L + colW * i} y1={T} y2={H - B} stroke="#eef0f4" strokeWidth="1" />
+          </g>
+        );
+      })}
+      <line x1={L + plotW} x2={L + plotW} y1={T} y2={H - B} stroke="#eef0f4" strokeWidth="1" />
+      {/* 가로 눈금 */}
       {ticks.map((t, k) => (
         <g key={k}>
           <line x1={L} x2={W - R} y1={y(t)} y2={y(t)} stroke="#e5e7eb" strokeWidth="1" />
-          <text x={L - 8} y={y(t) + 4} fontSize="11" textAnchor="end" fill="#767b8a">{t.toFixed(0)}</text>
+          <text x={L - 8} y={y(t) + 4} fontSize="11" textAnchor="end" fill="#767b8a">{t.toFixed(dec)}</text>
         </g>
       ))}
-      <line x1={L} x2={W - R} y1={y(target)} y2={y(target)} stroke="#334155" strokeWidth="1.6" strokeDasharray="6 4" />
-      <text x={W - R} y={y(target) - 6} fontSize="12" textAnchor="end" fill="#334155" fontWeight="700">목표 {target.toFixed(1)}</text>
-      <path d={path} fill="none" stroke={color || '#64748b'} strokeWidth="2" opacity="0.55" />
-      {pts.map((p) => {
-        const dow = new Date(p.date).getUTCDay();
-        const wkColor = dow === 0 ? '#dc2626' : dow === 6 ? '#2563eb' : '#767b8a';
+      {/* 목표선 */}
+      <line x1={L} x2={W - R} y1={yT} y2={yT} stroke="#334155" strokeWidth="2" strokeDasharray="7 4" />
+      <rect x={L + 4} y={yT - 21} width="82" height="18" rx="4" fill="#334155" />
+      <text x={L + 45} y={yT - 8} fontSize="11.5" textAnchor="middle" fill="#fff" fontWeight="700">목표 {target.toFixed(1)}</text>
+      {/* 일자별: 목표선 → 값 막대 + 점 + 값 */}
+      {series.map((s, i) => {
+        const dow = new Date(s.date).getUTCDay();
+        const wkColor = dow === 0 ? '#dc2626' : dow === 6 ? '#2563eb' : '#475569';
+        const px = x(i);
+        const day = Number(s.date.slice(8, 10));
+        const ok = s.value >= target;
+        const py = y(s.value);
+        const c = ok ? '#22c55e' : '#ef4444';
         return (
-          <g key={p.i}>
-            <text x={p.px} y={H - 26} fontSize="10.5" textAnchor="middle" fill="#475569">{Number(p.date.slice(8, 10))}</text>
-            <text x={p.px} y={H - 12} fontSize="10" textAnchor="middle" fill={wkColor}>{WEEKDAYS_KO[dow]}</text>
-            {p.active ? (
-              <circle cx={p.px} cy={p.py} r="6" fill={p.value >= target ? '#22c55e' : '#ef4444'} stroke="#fff" strokeWidth="1.5">
-                <title>{`${p.date} (${WEEKDAYS_KO[dow]}) · ${p.value.toFixed(1)} · ${p.value >= target ? '목표 달성 +' + (p.value - target).toFixed(1) : '목표 미달 -' + (target - p.value).toFixed(1)}`}</title>
-              </circle>
+          <g key={i}>
+            {/* 위/아래 날짜·요일 */}
+            <text x={px} y={T - 24} fontSize="10.5" textAnchor="middle" fill={wkColor} fontWeight="600">{day}</text>
+            <text x={px} y={T - 11} fontSize="10" textAnchor="middle" fill={wkColor}>{WEEKDAYS_KO[dow]}</text>
+            <text x={px} y={H - B + 18} fontSize="10.5" textAnchor="middle" fill={wkColor} fontWeight="600">{day}</text>
+            <text x={px} y={H - B + 32} fontSize="10" textAnchor="middle" fill={wkColor}>{WEEKDAYS_KO[dow]}</text>
+            {s.active ? (
+              <>
+                <line x1={px} x2={px} y1={yT} y2={py} stroke={c} strokeWidth="4" strokeLinecap="round" opacity="0.55" />
+                <circle cx={px} cy={py} r="5.5" fill={c} stroke="#fff" strokeWidth="1.5" />
+                <text x={px} y={ok ? py - 10 : py + 17} fontSize="9.5" textAnchor="middle" fill={ok ? '#15803d' : '#b91c1c'} fontWeight="600">{s.value.toFixed(1)}</text>
+                <rect x={L + colW * i} y={T} width={colW} height={H - T - B} fill="transparent">
+                  <title>{`${s.date} (${WEEKDAYS_KO[dow]}) · ${s.value.toFixed(1)} · ${ok ? '목표 달성 +' + (s.value - target).toFixed(1) : '목표 미달 -' + (target - s.value).toFixed(1)}`}</title>
+                </rect>
+              </>
             ) : (
-              <text x={p.px} y={y(0) - 4} fontSize="11" textAnchor="middle" fill="#cbd5e1">·<title>{`${p.date} · ${denomLabel} 데이터 없음`}</title></text>
+              <text x={px} y={yT + 16} fontSize="14" textAnchor="middle" fill="#cbd5e1">×<title>{`${s.date} · ${denomLabel} 데이터 없음`}</title></text>
             )}
           </g>
         );
@@ -371,7 +400,7 @@ export default function MeetingPage() {
         .mt-card.sel{outline:2px solid #1e293b}
         .mt-chartbox{border:1px solid #e2e8f0;border-radius:12px;padding:14px 16px;background:#fff}
         .mt-close{margin-left:auto;font:inherit;font-size:12px;padding:3px 10px;border:1px solid #d5d8e0;border-radius:6px;background:#fff;cursor:pointer}
-        .mt-legend{display:flex;gap:16px;font-size:12px;color:#475569;margin-bottom:6px}
+        .mt-legend{display:flex;gap:16px;font-size:12px;color:#475569;margin-bottom:6px;flex-wrap:wrap}
         .mt-legend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px;vertical-align:middle}
         .mt-foot{font-size:12px;color:#767b8a;margin-top:18px}
         @media print{.mt-tools{display:none}.mt-wrap{padding:0}.mt-card,.mt-w{break-inside:avoid}.mt-close{display:none}}
@@ -458,9 +487,10 @@ export default function MeetingPage() {
                   <button className="mt-close" onClick={() => setSelected(null)}>닫기 ✕</button>
                 </h2>
                 <div className="mt-legend">
-                  <span><i style={{ background: '#22c55e' }} /> 목표 달성일</span>
-                  <span><i style={{ background: '#ef4444' }} /> 목표 미달일</span>
-                  <span><i style={{ background: '#334155', height: 2, borderRadius: 0 }} /> 목표선</span>
+                  <span><i style={{ background: '#22c55e' }} /> 목표 달성일 (목표선 위로 막대)</span>
+                  <span><i style={{ background: '#ef4444' }} /> 목표 미달일 (목표선 아래로 막대)</span>
+                  <span><i style={{ background: '#334155', height: 2, borderRadius: 0, width: 16 }} /> 목표선</span>
+                  <span style={{ color: '#767b8a' }}>날짜·요일은 위/아래 모두 표시, 일요일 빨강/토요일 파랑 음영</span>
                 </div>
                 <DayChart series={sc.series} target={sc.target} color={sc.color} denomLabel={denomLabel} />
               </div>
