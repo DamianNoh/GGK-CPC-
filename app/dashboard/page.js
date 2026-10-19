@@ -10,6 +10,25 @@ function monthRange(monthStr) {
   return { start, end };
 }
 
+const isDateStr = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s || '');
+function todayStr() {
+  const n = new Date();
+  return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`;
+}
+function addDays(dateStr, n) {
+  const d = new Date(dateStr + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+function daysBetween(a, b) {
+  return Math.round((new Date(b + 'T00:00:00Z') - new Date(a + 'T00:00:00Z')) / 86400000) + 1;
+}
+// 직접 지정 기간의 비교 대상: 바로 앞의 같은 길이 기간 (예: 10/1~10/14 → 9/17~9/30)
+function prevRangeOf(start, end) {
+  const len = daysBetween(start, end);
+  return { start: addDays(start, -len), end: addDays(start, -1) };
+}
+
 function shiftMonth(monthStr, delta) {
   const [y, m] = monthStr.split('-').map(Number);
   const d = new Date(Date.UTC(y, m - 1 + delta, 1));
@@ -77,22 +96,36 @@ export default function DashboardPage() {
   const [error, setError] = useState('');
   const [comments, setComments] = useState([]);
 
+  // 조회 기간: 월별 / 직접 지정(하루 또는 시작일~종료일)
+  const [rangeType, setRangeType] = useState('month');
+  const [customStart, setCustomStart] = useState(`${defaultMonth()}-01`);
+  const [customEnd, setCustomEnd] = useState(todayStr());
+  const rangeOk = rangeType === 'month' || (isDateStr(customStart) && isDateStr(customEnd) && customStart <= customEnd && daysBetween(customStart, customEnd) <= 366);
+  const range = rangeType === 'month' ? monthRange(month) : { start: customStart, end: customEnd };
+  const rangeKey = `${rangeType}|${month}|${customStart}|${customEnd}`;
+
   // 현장 코멘트 (일자별 상세 표에 표시)
   useEffect(() => {
-    const { start, end } = monthRange(month);
-    fetch(`/api/comments?start=${start}&end=${end}`)
+    if (!rangeOk) return;
+    fetch(`/api/comments?start=${range.start}&end=${range.end}`)
       .then((r) => r.json())
       .then((j) => setComments(Array.isArray(j) ? j : []))
       .catch(() => setComments([]));
-  }, [month]);
+  }, [rangeKey]); // eslint-disable-line
   const commentsByDate = {};
   comments.forEach((c) => {
     (commentsByDate[c.date] = commentsByDate[c.date] || []).push(c);
   });
 
   useEffect(() => {
-    const { start, end } = monthRange(month);
-    const prevRange = monthRange(shiftMonth(month, -1));
+    if (!rangeOk) {
+      setError('시작일이 종료일보다 늦거나 날짜가 올바르지 않습니다. (최대 366일)');
+      setLoading(false);
+      return;
+    }
+    const start = range.start;
+    const end = range.end;
+    const prevRange = rangeType === 'month' ? monthRange(shiftMonth(month, -1)) : prevRangeOf(start, end);
     setLoading(true);
     setError('');
     Promise.all([
@@ -108,11 +141,11 @@ export default function DashboardPage() {
       })
       .catch((e) => setError(e.message || '데이터를 불러오지 못했습니다.'))
       .finally(() => setLoading(false));
-  }, [month, mode]);
+  }, [rangeKey, mode]); // eslint-disable-line
 
   const daily = data?.daily || [];
   const seriesMeta = data?.series_meta || [];
-  const labels = daily.map((d) => d.day + '일');
+  const labels = daily.map((d) => (rangeType === 'month' ? d.day + '일' : Number(d.date.slice(5, 7)) + '/' + d.day));
   const totalRaw = daily.map((d) => d.total_raw || 0);
   const totalPerPerson = daily.map((d) => d.total_per_person || 0);
 
@@ -168,8 +201,11 @@ export default function DashboardPage() {
       );
       base.push(entry);
     });
+    if (rangeType !== 'month') {
+      base.forEach((b) => { if (b.reason) b.reason = b.reason.replace(/전월/g, '직전 기간').replace('(다음 달부터 표시됩니다)', ''); });
+    }
     return base;
-  }, [daily, seriesForChart, mode, prevData]);
+  }, [daily, seriesForChart, mode, prevData, rangeType]);
 
   const wcTotals = data?.wc_totals || {};
   const wcLabels = seriesMeta.map((m) => m.name.split(' · ')[1] || m.code);
@@ -201,7 +237,20 @@ export default function DashboardPage() {
       </div>
 
       <div className="toolbar">
-        <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} />
+        <div className="seg">
+          <button className={rangeType === 'month' ? 'active' : ''} onClick={() => setRangeType('month')}>월별</button>
+          <button className={rangeType === 'custom' ? 'active' : ''} onClick={() => setRangeType('custom')}>기간 지정</button>
+        </div>
+        {rangeType === 'month' ? (
+          <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} />
+        ) : (
+          <>
+            <input type="date" value={customStart} onChange={(e) => { setCustomStart(e.target.value); if (e.target.value > customEnd) setCustomEnd(e.target.value); }} />
+            <span style={{ fontSize: 13, color: '#767b8a' }}>~</span>
+            <input type="date" value={customEnd} min={customStart} onChange={(e) => setCustomEnd(e.target.value)} />
+            <button className="btn ghost" onClick={() => setCustomEnd(customStart)} style={{ padding: '6px 10px' }}>하루만 보기</button>
+          </>
+        )}
         <div className="seg">
           <button className={mode === 'hours' ? 'active' : ''} onClick={() => setMode('hours')}>근무시간 기준</button>
           <button className={mode === 'headcount' ? 'active' : ''} onClick={() => setMode('headcount')}>배치 인원수 기준</button>

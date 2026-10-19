@@ -15,6 +15,25 @@ function monthRange(m) {
   const last = new Date(Date.UTC(y, mo, 0)).getUTCDate();
   return { start: `${m}-01`, end: `${m}-${String(last).padStart(2, '0')}` };
 }
+const isDateStr = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s || '');
+function todayStr() {
+  const n = new Date();
+  return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`;
+}
+function addDays(dateStr, n) {
+  const d = new Date(dateStr + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+function daysBetween(a, b) {
+  return Math.round((new Date(b + 'T00:00:00Z') - new Date(a + 'T00:00:00Z')) / 86400000) + 1;
+}
+// 직접 지정 기간의 비교 대상: 바로 앞의 같은 길이 기간 (예: 10/1~10/14 → 9/17~9/30)
+function prevRangeOf(start, end) {
+  const len = daysBetween(start, end);
+  return { start: addDays(start, -len), end: addDays(start, -1) };
+}
+
 function shiftMonth(m, delta) {
   const [y, mo] = m.split('-').map(Number);
   const d = new Date(Date.UTC(y, mo - 1 + delta, 1));
@@ -227,6 +246,20 @@ export default function MeetingPage() {
   const [error, setError] = useState('');
   const [selected, setSelected] = useState(null);
 
+  // 조회 기간: 월별 / 직접 지정(하루 또는 시작일~종료일)
+  const [rangeType, setRangeType] = useState('month');
+  const [customStart, setCustomStart] = useState(`${defaultMonth()}-01`);
+  const [customEnd, setCustomEnd] = useState(todayStr());
+  const rangeOk = rangeType === 'month' || (isDateStr(customStart) && isDateStr(customEnd) && customStart <= customEnd && daysBetween(customStart, customEnd) <= 366);
+  const range = rangeType === 'month' ? monthRange(month) : { start: customStart, end: customEnd };
+  const rangeKey = `${rangeType}|${month}|${customStart}|${customEnd}`;
+  const prevWord = rangeType === 'month' ? '전월' : '직전 기간';
+  // 월 단위 표현을 기간 지정 시에 맞게 바꿔서 표시
+  const tw = (s) => {
+    if (typeof s !== 'string' || rangeType === 'month') return s;
+    return s.replace(/전월/g, '직전 기간').replace(/월평균/g, '기간 평균').replace(/월 기준/g, '기간 기준').replace('(신규 항목)', '').replace('(다음 달부터 표시됩니다)', '');
+  };
+
   // 현장 코멘트
   const [comments, setComments] = useState([]);
   const [authors, setAuthors] = useState([]);
@@ -249,12 +282,17 @@ export default function MeetingPage() {
   }, []);
 
   useEffect(() => {
-    setCDate((prevD) => (prevD.startsWith(month) ? prevD : `${month}-01`));
-  }, [month]);
+    setCDate((prevD) => (prevD >= range.start && prevD <= range.end ? prevD : range.start));
+  }, [rangeKey]); // eslint-disable-line
 
   useEffect(() => {
-    const cur = monthRange(month);
-    const pr = monthRange(shiftMonth(month, -1));
+    if (!rangeOk) {
+      setError('시작일이 종료일보다 늦거나 날짜가 올바르지 않습니다. (최대 366일)');
+      setLoading(false);
+      return;
+    }
+    const cur = range;
+    const pr = rangeType === 'month' ? monthRange(shiftMonth(month, -1)) : prevRangeOf(range.start, range.end);
     setLoading(true);
     setError('');
     Promise.all([
@@ -268,16 +306,17 @@ export default function MeetingPage() {
       })
       .catch((e) => setError(e.message || '데이터를 불러오지 못했습니다.'))
       .finally(() => setLoading(false));
-  }, [month, mode]);
+  }, [rangeKey, mode]); // eslint-disable-line
 
   function loadComments() {
-    const { start, end } = monthRange(month);
+    if (!rangeOk) return;
+    const { start, end } = range;
     fetch(`/api/comments?start=${start}&end=${end}`)
       .then((r) => r.json())
       .then((j) => setComments(Array.isArray(j) ? j : []))
       .catch(() => setComments([]));
   }
-  useEffect(() => { loadComments(); }, [month]); // eslint-disable-line
+  useEffect(() => { loadComments(); }, [rangeKey]); // eslint-disable-line
 
   useEffect(() => {
     fetch('/api/comments/authors')
@@ -546,7 +585,19 @@ export default function MeetingPage() {
       </div>
 
       <div className="mt-tools">
-        <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} />
+        <button className={rangeType === 'month' ? 'on' : ''} onClick={() => setRangeType('month')}>월별</button>
+        <button className={rangeType === 'custom' ? 'on' : ''} onClick={() => setRangeType('custom')}>기간 지정</button>
+        {rangeType === 'month' ? (
+          <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} />
+        ) : (
+          <>
+            <input type="date" value={customStart} onChange={(e) => { setCustomStart(e.target.value); if (e.target.value > customEnd) setCustomEnd(e.target.value); }} />
+            <span style={{ fontSize: 13, color: '#767b8a' }}>~</span>
+            <input type="date" value={customEnd} min={customStart} onChange={(e) => setCustomEnd(e.target.value)} />
+            <button onClick={() => setCustomEnd(customStart)}>하루만 보기</button>
+          </>
+        )}
+        <span style={{ width: 8 }} />
         <button className={mode === 'hours' ? 'on' : ''} onClick={() => setMode('hours')}>근무시간 기준</button>
         <button className={mode === 'headcount' ? 'on' : ''} onClick={() => setMode('headcount')}>배치 인원수 기준</button>
         <button onClick={() => window.print()}>인쇄 / PDF 저장</button>
@@ -592,9 +643,9 @@ export default function MeetingPage() {
                     <div><div className="lbl">차이</div><div className="big" style={{ color: c.achieved ? '#16a34a' : '#dc2626' }}>{c.diff >= 0 ? '+' : ''}{f1(c.diff)}</div></div>
                   </div>
                   {c.reason.r != null && (
-                    <div className="mt-chg">전월 대비 CPC 금액 {sgn(c.reason.r)} · {denomLabel} {sgn(c.reason.d)}</div>
+                    <div className="mt-chg">{prevWord} 대비 CPC 금액 {sgn(c.reason.r)} · {denomLabel} {sgn(c.reason.d)}</div>
                   )}
-                  <div className="mt-note"><b>{c.achieved ? '달성 요인: ' : '미달 원인: '}</b>{c.reason.text}</div>
+                  <div className="mt-note"><b>{c.achieved ? '달성 요인: ' : '미달 원인: '}</b>{tw(c.reason.text)}</div>
                   <div className="mt-note" style={{ color: '#767b8a' }}>
                     미달일 {c.misses.length}/{c.activeDays}일 (근무 데이터 있는 날 기준)
                   </div>
@@ -628,7 +679,7 @@ export default function MeetingPage() {
                 <DayChart series={sc.series} target={sc.target} color={sc.color} denomLabel={denomLabel} />
                 {scComments.length > 0 && (
                   <div style={{ marginTop: 10 }}>
-                    <div style={{ fontSize: 13, fontWeight: 700 }}>이 달 현장 코멘트</div>
+                    <div style={{ fontSize: 13, fontWeight: 700 }}>이 기간 현장 코멘트</div>
                     {renderComments(scComments, true)}
                   </div>
                 )}
@@ -651,7 +702,7 @@ export default function MeetingPage() {
                       <div className="ds">
                         실제 {f1(w.value)} / 목표 {f1(w.target)} → <b>-{f1(w.gap)} ({w.gapPct.toFixed(1)}% 부족)</b><br />
                         CPC 금액 {f0(w.raw)} · {denomLabel} {f1(w.den)}<br />
-                        {w.why}
+                        {tw(w.why)}
                       </div>
                       {sl && <div className="staff"><b>인력 환산:</b> {sl}</div>}
                       {renderComments(commentsFor(w.date, w.code), false)}
@@ -675,7 +726,7 @@ export default function MeetingPage() {
                     <div className="ds">
                       실제 {f1(w.value)} / 목표 {f1(w.target)} → <b>+{f1(w.surplus)} ({w.surplusPct.toFixed(1)}% 초과)</b><br />
                       CPC 금액 {f0(w.raw)} · {denomLabel} {f1(w.den)}<br />
-                      {w.why}
+                      {tw(w.why)}
                     </div>
                     {renderComments(commentsFor(w.date, w.code), false)}
                   </div>
@@ -712,7 +763,7 @@ export default function MeetingPage() {
                   <div key={c.key} className="mt-card bad">
                     <div className="nm"><span className="mt-dot" style={{ background: c.color }} />{c.name}</div>
                     <ul className="mt-sg">
-                      {(c.suggestions || []).map((s, i) => <li key={i}>{s}</li>)}
+                      {(c.suggestions || []).map((s, i) => <li key={i}>{tw(s)}</li>)}
                     </ul>
                   </div>
                 ))}
@@ -729,7 +780,7 @@ export default function MeetingPage() {
               <form onSubmit={submitComment}>
                 <div className="mt-cform">
                   <label>날짜
-                    <input type="date" value={cDate} min={`${month}-01`} max={monthRange(month).end} onChange={(e) => setCDate(e.target.value)} />
+                    <input type="date" value={cDate} min={range.start} max={range.end} onChange={(e) => setCDate(e.target.value)} />
                   </label>
                   <label>대상
                     <select value={cTarget} onChange={(e) => setCTarget(e.target.value)}>
@@ -758,7 +809,7 @@ export default function MeetingPage() {
             </div>
             <div style={{ marginTop: 12 }}>
               {comments.length === 0 ? (
-                <div className="mt-note">이 달에 등록된 코멘트가 없습니다.</div>
+                <div className="mt-note">이 기간에 등록된 코멘트가 없습니다.</div>
               ) : (
                 renderComments(comments, true)
               )}
