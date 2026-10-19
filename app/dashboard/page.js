@@ -75,6 +75,20 @@ export default function DashboardPage() {
   const [prevData, setPrevData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [comments, setComments] = useState([]);
+
+  // 현장 코멘트 (일자별 상세 표에 표시)
+  useEffect(() => {
+    const { start, end } = monthRange(month);
+    fetch(`/api/comments?start=${start}&end=${end}`)
+      .then((r) => r.json())
+      .then((j) => setComments(Array.isArray(j) ? j : []))
+      .catch(() => setComments([]));
+  }, [month]);
+  const commentsByDate = {};
+  comments.forEach((c) => {
+    (commentsByDate[c.date] = commentsByDate[c.date] || []).push(c);
+  });
 
   useEffect(() => {
     const { start, end } = monthRange(month);
@@ -344,7 +358,18 @@ export default function DashboardPage() {
                 <tbody>
                   {daily.map((d, i) => (
                     <tr key={i}>
-                      <td className="detail-date-col">{d.date} ({weekdayLabel(d.date)})</td>
+                      <td className="detail-date-col">
+                        {d.date} ({weekdayLabel(d.date)})
+                        {commentsByDate[d.date] && (
+                          <a
+                            href={`/analysis?date=${d.date}`}
+                            title={commentsByDate[d.date].map((c) => `${c.authorName}: ${c.body}`).join('\n')}
+                            style={{ marginLeft: 6, fontSize: 11.5, color: '#2563eb', textDecoration: 'none', fontWeight: 700 }}
+                          >
+                            💬{commentsByDate[d.date].length}
+                          </a>
+                        )}
+                      </td>
                       {tableDetail
                         ? seriesMeta.map((m, si) => (
                             <Fragment key={si}>

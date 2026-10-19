@@ -32,6 +32,8 @@ const pct = (cur, prev) => (prev ? ((cur - prev) / prev) * 100 : null);
 const sgn = (v) => `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`;
 const avgOf = (arr, f) => (arr.length ? arr.reduce((a, x) => a + f(x), 0) / arr.length : 0);
 const ppl = (v, mode) => (mode === 'hours' ? v / HOURS_PER_PERSON : v);
+const fmtTime = (s) =>
+  s ? new Date(s).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
 
 function monthReason(curRaw, curDenom, prevRaw, prevDenom, denomLabel, achieved) {
   const r = pct(curRaw, prevRaw);
@@ -143,9 +145,7 @@ function buildSuggestions(c, winners, denomLabel, mode) {
   return out;
 }
 
-// 일별 그래프: 하루마다 세로 칸을 만들고, 목표선에서 해당 일자의 점까지 막대(롤리팝)로 연결합니다.
-//  - 날짜/요일은 칸 맨 아래와 맨 위에 모두 표시, 세로 점선으로 위치를 맞춰 볼 수 있습니다.
-//  - 주말은 칸 배경을 음영 처리합니다.
+// 일별 그래프: 하루마다 세로 칸 + 목표선에서 값까지 막대(롤리팝)
 function DayChart({ series, target, color, denomLabel }) {
   const W = 1000, H = 380, L = 52, R = 18, T = 46, B = 52;
   const n = series.length;
@@ -164,7 +164,6 @@ function DayChart({ series, target, color, denomLabel }) {
   const yT = y(target);
   return (
     <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: 'auto' }}>
-      {/* 하루 1칸: 주말 음영 + 칸 구분선 */}
       {series.map((s, i) => {
         const dow = new Date(s.date).getUTCDay();
         return (
@@ -177,18 +176,15 @@ function DayChart({ series, target, color, denomLabel }) {
         );
       })}
       <line x1={L + plotW} x2={L + plotW} y1={T} y2={H - B} stroke="#eef0f4" strokeWidth="1" />
-      {/* 가로 눈금 */}
       {ticks.map((t, k) => (
         <g key={k}>
           <line x1={L} x2={W - R} y1={y(t)} y2={y(t)} stroke="#e5e7eb" strokeWidth="1" />
           <text x={L - 8} y={y(t) + 4} fontSize="11" textAnchor="end" fill="#767b8a">{t.toFixed(dec)}</text>
         </g>
       ))}
-      {/* 목표선 */}
       <line x1={L} x2={W - R} y1={yT} y2={yT} stroke="#334155" strokeWidth="2" strokeDasharray="7 4" />
       <rect x={L + 4} y={yT - 21} width="82" height="18" rx="4" fill="#334155" />
       <text x={L + 45} y={yT - 8} fontSize="11.5" textAnchor="middle" fill="#fff" fontWeight="700">목표 {target.toFixed(1)}</text>
-      {/* 일자별: 목표선 → 값 막대 + 점 + 값 */}
       {series.map((s, i) => {
         const dow = new Date(s.date).getUTCDay();
         const wkColor = dow === 0 ? '#dc2626' : dow === 6 ? '#2563eb' : '#475569';
@@ -199,7 +195,6 @@ function DayChart({ series, target, color, denomLabel }) {
         const c = ok ? '#22c55e' : '#ef4444';
         return (
           <g key={i}>
-            {/* 위/아래 날짜·요일 */}
             <text x={px} y={T - 24} fontSize="10.5" textAnchor="middle" fill={wkColor} fontWeight="600">{day}</text>
             <text x={px} y={T - 11} fontSize="10" textAnchor="middle" fill={wkColor}>{WEEKDAYS_KO[dow]}</text>
             <text x={px} y={H - B + 18} fontSize="10.5" textAnchor="middle" fill={wkColor} fontWeight="600">{day}</text>
@@ -232,6 +227,31 @@ export default function MeetingPage() {
   const [error, setError] = useState('');
   const [selected, setSelected] = useState(null);
 
+  // 현장 코멘트
+  const [comments, setComments] = useState([]);
+  const [authors, setAuthors] = useState([]);
+  const [cDate, setCDate] = useState(`${defaultMonth()}-01`);
+  const [cTarget, setCTarget] = useState('ALL');
+  const [cAuthor, setCAuthor] = useState('');
+  const [cCode, setCCode] = useState('');
+  const [cBody, setCBody] = useState('');
+  const [cMsg, setCMsg] = useState('');
+  const [cOk, setCOk] = useState(false);
+  const [cSaving, setCSaving] = useState(false);
+
+  // 대시보드의 코멘트 표시(💬)에서 넘어온 경우 해당 달/날짜로 이동
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.search).get('date');
+    if (/^\d{4}-\d{2}-\d{2}$/.test(p || '')) {
+      setMonth(p.slice(0, 7));
+      setCDate(p);
+    }
+  }, []);
+
+  useEffect(() => {
+    setCDate((prevD) => (prevD.startsWith(month) ? prevD : `${month}-01`));
+  }, [month]);
+
   useEffect(() => {
     const cur = monthRange(month);
     const pr = monthRange(shiftMonth(month, -1));
@@ -250,6 +270,22 @@ export default function MeetingPage() {
       .finally(() => setLoading(false));
   }, [month, mode]);
 
+  function loadComments() {
+    const { start, end } = monthRange(month);
+    fetch(`/api/comments?start=${start}&end=${end}`)
+      .then((r) => r.json())
+      .then((j) => setComments(Array.isArray(j) ? j : []))
+      .catch(() => setComments([]));
+  }
+  useEffect(() => { loadComments(); }, [month]); // eslint-disable-line
+
+  useEffect(() => {
+    fetch('/api/comments/authors')
+      .then((r) => r.json())
+      .then((j) => setAuthors(Array.isArray(j) ? j : []))
+      .catch(() => setAuthors([]));
+  }, []);
+
   const denomLabel = mode === 'hours' ? '근무시간' : '인원수';
 
   const report = useMemo(() => {
@@ -259,10 +295,10 @@ export default function MeetingPage() {
     const metas = data.series_meta || [];
 
     const defs = [
-      { key: 'total_per_person', raw: 'total_raw', den: 'total_denom', name: '전체 1인당', color: '#334155', target: TOTAL_TARGET, isTotal: true },
+      { key: 'total_per_person', raw: 'total_raw', den: 'total_denom', name: '전체 1인당', code: 'ALL', color: '#334155', target: TOTAL_TARGET, isTotal: true },
       ...metas.map((m, i) => ({
         key: 'p' + (i + 1), raw: 'p' + (i + 1) + '_raw', den: 'p' + (i + 1) + '_denom',
-        name: m.name, color: m.color, target: findTarget(m.name)
+        name: m.name, code: m.code, color: m.color, target: findTarget(m.name)
       }))
     ];
 
@@ -287,7 +323,7 @@ export default function MeetingPage() {
               date: d.date, value: v, gap: def.target - v, gapPct: ((def.target - v) / def.target) * 100,
               raw: d[def.raw] || 0, den: d[def.den] || 0, target: def.target,
               why: dayReason(d[def.raw] || 0, d[def.den] || 0, avgRaw, avgDen, denomLabel),
-              name: def.name, color: def.color
+              name: def.name, code: def.code, color: def.color
             };
           })
           .sort((a, b) => b.gapPct - a.gapPct);
@@ -298,7 +334,7 @@ export default function MeetingPage() {
         card.wins = rows
           .filter((x) => x.value >= def.target)
           .map((x) => ({
-            ...x, name: def.name, color: def.color, target: def.target,
+            ...x, name: def.name, code: def.code, color: def.color, target: def.target,
             surplus: x.value - def.target, surplusPct: ((x.value - def.target) / def.target) * 100,
             why: winDayReason(x.raw, x.den, avgRaw, avgDen, denomLabel)
           }))
@@ -351,6 +387,90 @@ export default function MeetingPage() {
     return { cards, withTarget, achievedCnt, worst, worstTotal, byWd, wdWorst, bests };
   }, [data, prev, mode]);
 
+  // ---------- 코멘트 관련 ----------
+  const targetOptions = [{ value: 'ALL', label: '전체/공통' }, ...((data?.series_meta || []).map((m) => ({ value: m.code, label: m.name })))];
+  const targetLabel = (code) => (code === 'ALL' ? '전체/공통' : (targetOptions.find((o) => o.value === code)?.label || code));
+  const commentsFor = (date, code) => comments.filter((c) => c.date === date && (c.target === code || c.target === 'ALL'));
+
+  async function submitComment(e) {
+    e.preventDefault();
+    setCMsg('');
+    setCOk(false);
+    if (!cAuthor) { setCMsg('작성자를 선택해 주세요.'); return; }
+    if (!cCode) { setCMsg('개인 작성코드를 입력해 주세요.'); return; }
+    if (!cBody.trim()) { setCMsg('코멘트 내용을 입력해 주세요.'); return; }
+    setCSaving(true);
+    try {
+      const res = await fetch('/api/comments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ authorId: cAuthor, code: cCode, date: cDate, target: cTarget, body: cBody })
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) { setCMsg(j.error || '저장하지 못했습니다.'); return; }
+      setCBody('');
+      setCCode('');
+      setCOk(true);
+      setCMsg('코멘트가 저장되었습니다.');
+      loadComments();
+    } finally {
+      setCSaving(false);
+    }
+  }
+
+  async function editComment(c) {
+    const nb = window.prompt('수정할 내용을 입력하세요', c.body);
+    if (nb === null) return;
+    const code = window.prompt(`${c.authorName} 님의 개인 작성코드를 입력하세요`);
+    if (!code) return;
+    const res = await fetch(`/api/comments/${c.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ authorId: c.authorId, code, body: nb })
+    });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) { window.alert(j.error || '수정하지 못했습니다.'); return; }
+    loadComments();
+  }
+
+  async function removeComment(c) {
+    if (!window.confirm('이 코멘트를 삭제할까요?')) return;
+    const code = window.prompt(`${c.authorName} 님의 개인 작성코드를 입력하세요`);
+    if (!code) return;
+    const res = await fetch(`/api/comments/${c.id}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ authorId: c.authorId, code })
+    });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) { window.alert(j.error || '삭제하지 못했습니다.'); return; }
+    loadComments();
+  }
+
+  function renderComments(list, showDate) {
+    if (!list || !list.length) return null;
+    return (
+      <div className="mt-cms">
+        {list.map((c) => (
+          <div className="mt-cm" key={c.id}>
+            <div className="mt-cm-body">
+              {showDate && <b>{c.date} ({wd(c.date)}) </b>}
+              {c.target !== 'ALL' && <span className="mt-cm-tag">{targetLabel(c.target)}</span>}
+              {c.body}
+            </div>
+            <div className="mt-cm-meta">
+              {c.authorName} · {fmtTime(c.createdAt)}{c.updatedAt && c.updatedAt !== c.createdAt ? ' (수정됨)' : ''}
+              <span className="mt-cm-act">
+                <button onClick={() => editComment(c)}>수정</button>
+                <button onClick={() => removeComment(c)}>삭제</button>
+              </span>
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
   return (
     <div className="mt-wrap">
       <style>{`
@@ -402,8 +522,20 @@ export default function MeetingPage() {
         .mt-close{margin-left:auto;font:inherit;font-size:12px;padding:3px 10px;border:1px solid #d5d8e0;border-radius:6px;background:#fff;cursor:pointer}
         .mt-legend{display:flex;gap:16px;font-size:12px;color:#475569;margin-bottom:6px;flex-wrap:wrap}
         .mt-legend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px;vertical-align:middle}
+        .mt-cms{margin-top:8px;display:flex;flex-direction:column;gap:6px}
+        .mt-cm{background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:7px 10px}
+        .mt-cm-body{font-size:13px;color:#334155;line-height:1.5;white-space:pre-wrap}
+        .mt-cm-tag{display:inline-block;font-size:11px;font-weight:700;background:#e2e8f0;color:#334155;border-radius:999px;padding:1px 8px;margin-right:6px}
+        .mt-cm-meta{font-size:11.5px;color:#767b8a;margin-top:2px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+        .mt-cm-act button{font:inherit;font-size:11px;border:1px solid #d5d8e0;background:#fff;border-radius:5px;padding:1px 7px;margin-left:4px;cursor:pointer}
+        .mt-cform{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;align-items:end;margin-bottom:10px}
+        .mt-cform label{display:flex;flex-direction:column;font-size:12px;color:#475569;gap:4px}
+        .mt-cform input,.mt-cform select,.mt-cform textarea{font:inherit;padding:7px 10px;border:1px solid #d5d8e0;border-radius:8px;background:#fff}
+        .mt-cform .wide{grid-column:1 / -1}
+        .mt-cbtn{font:inherit;padding:8px 16px;border-radius:8px;border:0;background:#1e293b;color:#fff;font-weight:600;cursor:pointer}
+        .mt-cbtn:disabled{opacity:.6;cursor:default}
         .mt-foot{font-size:12px;color:#767b8a;margin-top:18px}
-        @media print{.mt-tools{display:none}.mt-wrap{padding:0}.mt-card,.mt-w{break-inside:avoid}.mt-close{display:none}}
+        @media print{.mt-tools,.mt-cform,.mt-cm-act{display:none}.mt-wrap{padding:0}.mt-card,.mt-w{break-inside:avoid}.mt-close{display:none}}
       `}</style>
 
       <div className="mt-head">
@@ -476,6 +608,7 @@ export default function MeetingPage() {
             if (!sc) return null;
             const hit = sc.series.filter((s) => s.active && s.value >= sc.target).length;
             const miss = sc.series.filter((s) => s.active && s.value < sc.target).length;
+            const scComments = comments.filter((c) => c.target === sc.code || c.target === 'ALL');
             return (
               <div className="mt-sec mt-chartbox">
                 <h2 style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -493,6 +626,12 @@ export default function MeetingPage() {
                   <span style={{ color: '#767b8a' }}>날짜·요일은 위/아래 모두 표시, 일요일 빨강/토요일 파랑 음영</span>
                 </div>
                 <DayChart series={sc.series} target={sc.target} color={sc.color} denomLabel={denomLabel} />
+                {scComments.length > 0 && (
+                  <div style={{ marginTop: 10 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700 }}>이 달 현장 코멘트</div>
+                    {renderComments(scComments, true)}
+                  </div>
+                )}
               </div>
             );
           })()}
@@ -515,6 +654,7 @@ export default function MeetingPage() {
                         {w.why}
                       </div>
                       {sl && <div className="staff"><b>인력 환산:</b> {sl}</div>}
+                      {renderComments(commentsFor(w.date, w.code), false)}
                     </div>
                   );
                 })}
@@ -537,6 +677,7 @@ export default function MeetingPage() {
                       CPC 금액 {f0(w.raw)} · {denomLabel} {f1(w.den)}<br />
                       {w.why}
                     </div>
+                    {renderComments(commentsFor(w.date, w.code), false)}
                   </div>
                 ))}
               </div>
@@ -579,8 +720,53 @@ export default function MeetingPage() {
             )}
           </div>
 
+          <div className="mt-sec" id="comments">
+            <h2>6. 현장 코멘트</h2>
+            <div className="mt-card">
+              <div style={{ fontSize: 13, color: '#475569', marginBottom: 10 }}>
+                등록된 작성자만 개인 작성코드로 코멘트를 남길 수 있습니다. 작성자 이름과 작성 시각이 자동으로 기록됩니다.
+              </div>
+              <form onSubmit={submitComment}>
+                <div className="mt-cform">
+                  <label>날짜
+                    <input type="date" value={cDate} min={`${month}-01`} max={monthRange(month).end} onChange={(e) => setCDate(e.target.value)} />
+                  </label>
+                  <label>대상
+                    <select value={cTarget} onChange={(e) => setCTarget(e.target.value)}>
+                      {targetOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    </select>
+                  </label>
+                  <label>작성자
+                    <select value={cAuthor} onChange={(e) => setCAuthor(e.target.value)}>
+                      <option value="">선택하세요</option>
+                      {authors.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                    </select>
+                  </label>
+                  <label>개인 작성코드
+                    <input type="password" value={cCode} onChange={(e) => setCCode(e.target.value)} autoComplete="off" />
+                  </label>
+                  <label className="wide">코멘트 (500자 이내)
+                    <textarea rows={2} value={cBody} onChange={(e) => setCBody(e.target.value)} placeholder="예: 항공편 지연으로 오후 작업량 감소, 교육으로 인원 2명 이탈 등" />
+                  </label>
+                </div>
+                <button className="mt-cbtn" type="submit" disabled={cSaving}>{cSaving ? '저장 중...' : '코멘트 저장'}</button>
+                {cMsg && <span style={{ marginLeft: 12, fontSize: 12.5, color: cOk ? '#16a34a' : '#dc2626' }}>{cMsg}</span>}
+                {authors.length === 0 && (
+                  <div style={{ fontSize: 12, color: '#767b8a', marginTop: 8 }}>등록된 작성자가 없습니다. 관리자에게 작성자 등록을 요청해 주세요.</div>
+                )}
+              </form>
+            </div>
+            <div style={{ marginTop: 12 }}>
+              {comments.length === 0 ? (
+                <div className="mt-note">이 달에 등록된 코멘트가 없습니다.</div>
+              ) : (
+                renderComments(comments, true)
+              )}
+            </div>
+          </div>
+
           <div className="mt-foot">
-            * 실제 평균은 대시보드와 동일하게 일별 값의 평균입니다. 원인 분석은 전월 대비(월 단위), 해당 월 일 평균 대비(일 단위) 변화율로 자동 계산한 참고용 추정입니다. 인원 환산은 근무시간 ÷ 8시간의 근사치이며 CPC 금액(물량)이 변하지 않는다는 가정입니다. 개선 제안은 인력·물량 데이터에서 도출한 추정이며, 실제 작업 방식 변경 등 현장 요인은 데이터에 없으므로 회의에서 보충이 필요합니다.
+            * 실제 평균은 대시보드와 동일하게 일별 값의 평균입니다. 원인 분석은 전월 대비(월 단위), 해당 월 일 평균 대비(일 단위) 변화율로 자동 계산한 참고용 추정입니다. 인원 환산은 근무시간 ÷ 8시간의 근사치이며 CPC 금액(물량)이 변하지 않는다는 가정입니다. 개선 제안은 인력·물량 데이터에서 도출한 추정이며, 실제 작업 방식 변경 등 현장 요인은 현장 코멘트와 회의에서 보충이 필요합니다.
           </div>
         </>
       )}
